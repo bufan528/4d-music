@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/analyze",
+      "destination": "http://101.200.13.100:8000/analyze"
+    },
+    {
+      "source": "/leaderboard",
+      "destination": "http://101.200.13.100:8000/leaderboard"
+    },
+    {
+      "source": "/processed/:match*",
+      "destination": "http://101.200.13.100:8000/processed/:match*"
+    }
+  ]
+}
