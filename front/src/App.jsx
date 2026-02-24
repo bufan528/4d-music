@@ -12,6 +12,231 @@ import {
 } from 'lucide-react';
 import Chart from 'chart.js/auto';
 
+
+const FourDimVocalHero = ({ className = "" }) => (
+  <div className={`w-full h-[50vh] min-h-[320px] flex items-center justify-center ${className}`}>
+    <svg
+      viewBox="0 0 1200 600"
+      className="w-full h-full"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label="四维声乐 - 多维声学分析可视化图标"
+    >
+      <defs>
+        {/* 背景渐变 */}
+        <radialGradient id="bg" cx="50%" cy="45%" r="70%">
+          <stop offset="0%" stopColor="#0B1220" />
+          <stop offset="45%" stopColor="#070B14" />
+          <stop offset="100%" stopColor="#04060D" />
+        </radialGradient>
+
+        {/* 主环渐变 */}
+        <linearGradient id="ringGrad" x1="300" y1="120" x2="900" y2="520" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#00F5A0" />
+          <stop offset="0.45" stopColor="#00D9F5" />
+          <stop offset="1" stopColor="#8A2BE2" />
+        </linearGradient>
+
+        {/* 音符渐变 */}
+        <linearGradient id="noteGrad" x1="520" y1="180" x2="720" y2="420" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FF2E63" />
+          <stop offset="0.55" stopColor="#8A2BE2" />
+          <stop offset="1" stopColor="#00D9F5" />
+        </linearGradient>
+
+        {/* 发光滤镜 */}
+        <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="6" result="b" />
+          <feColorMatrix
+            in="b"
+            type="matrix"
+            values="
+              1 0 0 0 0
+              0 1 0 0 0
+              0 0 1 0 0
+              0 0 0 0.75 0"
+            result="c"
+          />
+          <feMerge>
+            <feMergeNode in="c" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+
+        {/* 更柔的外发光 */}
+        <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="16" result="b2" />
+          <feColorMatrix
+            in="b2"
+            type="matrix"
+            values="
+              1 0 0 0 0
+              0 1 0 0 0
+              0 0 1 0 0
+              0 0 0 0.35 0"
+            result="c2"
+          />
+          <feMerge>
+            <feMergeNode in="c2" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+
+        {/* 扫描线遮罩 */}
+        <linearGradient id="scanGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="rgba(0,0,0,0)" />
+          <stop offset="0.5" stopColor="rgba(255,255,255,0.25)" />
+          <stop offset="1" stopColor="rgba(0,0,0,0)" />
+        </linearGradient>
+
+        <mask id="scanMask">
+          <rect width="1200" height="600" fill="white" />
+          <rect x="-300" y="0" width="300" height="600" fill="url(#scanGrad)">
+            <animate attributeName="x" from="-300" to="1200" dur="4.6s" repeatCount="indefinite" />
+          </rect>
+        </mask>
+
+        {/* 点阵粒子 */}
+        <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+          <circle cx="2" cy="2" r="1.2" fill="rgba(148,163,184,0.18)" />
+        </pattern>
+      </defs>
+
+      {/* 背景 */}
+      <rect width="1200" height="600" fill="url(#bg)" />
+      <rect width="1200" height="600" fill="url(#dots)" opacity="0.9" />
+
+      {/* 软光背景 */}
+      <g opacity="0.9" filter="url(#softGlow)">
+        <circle cx="600" cy="290" r="210" fill="rgba(34,211,238,0.10)" />
+        <circle cx="520" cy="330" r="160" fill="rgba(168,85,247,0.10)" />
+        <circle cx="680" cy="330" r="160" fill="rgba(255,46,99,0.08)" />
+      </g>
+
+      {/* 声波环 */}
+      <g opacity="0.55" filter="url(#glow)">
+        <circle cx="600" cy="300" r="210" stroke="rgba(34,211,238,0.35)" strokeWidth="3" strokeDasharray="9 10">
+          <animateTransform attributeName="transform" type="rotate" from="0 600 300" to="360 600 300" dur="18s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="600" cy="300" r="170" stroke="rgba(168,85,247,0.30)" strokeWidth="2" strokeDasharray="4 8">
+          <animateTransform attributeName="transform" type="rotate" from="360 600 300" to="0 600 300" dur="14s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="600" cy="300" r="130" stroke="rgba(255,46,99,0.25)" strokeWidth="2" strokeDasharray="2 10">
+          <animateTransform attributeName="transform" type="rotate" from="0 600 300" to="360 600 300" dur="10s" repeatCount="indefinite" />
+        </circle>
+      </g>
+
+      {/* 主双环 */}
+      <g filter="url(#glow)">
+        <circle cx="600" cy="300" r="240" stroke="url(#ringGrad)" strokeWidth="10" opacity="0.95" />
+        <circle cx="600" cy="300" r="256" stroke="rgba(148,163,184,0.16)" strokeWidth="2" opacity="0.9" />
+      </g>
+
+      {/* 四维节点 */}
+      <g filter="url(#glow)">
+        {[
+          { x: 600, y: 44, c: "#00F5A0" },
+          { x: 956, y: 300, c: "#00D9F5" },
+          { x: 600, y: 556, c: "#8A2BE2" },
+          { x: 244, y: 300, c: "#FF2E63" },
+        ].map((p, i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r="12" fill={p.c} opacity="0.95" />
+            <circle cx={p.x} cy={p.y} r="12" fill="none" stroke={p.c} strokeWidth="2" opacity="0.8">
+              <animate attributeName="r" values="12;22;12" dur="2.2s" repeatCount="indefinite" begin={`${i * 0.2}s`} />
+              <animate attributeName="opacity" values="0.75;0.12;0.75" dur="2.2s" repeatCount="indefinite" begin={`${i * 0.2}s`} />
+            </circle>
+          </g>
+        ))}
+      </g>
+
+      {/* 四象限指标小柱 */}
+      <g opacity="0.9">
+        {/* 左上 */}
+        <g transform="translate(420 170)">
+          <rect x="0" y="70" width="12" height="30" rx="6" fill="rgba(0,245,160,0.75)" />
+          <rect x="18" y="52" width="12" height="48" rx="6" fill="rgba(0,217,245,0.75)" />
+          <rect x="36" y="34" width="12" height="66" rx="6" fill="rgba(138,43,226,0.75)" />
+        </g>
+        {/* 右上 */}
+        <g transform="translate(730 170)">
+          <rect x="0" y="50" width="12" height="50" rx="6" fill="rgba(255,46,99,0.70)" />
+          <rect x="18" y="60" width="12" height="40" rx="6" fill="rgba(0,217,245,0.65)" />
+          <rect x="36" y="40" width="12" height="60" rx="6" fill="rgba(0,245,160,0.65)" />
+        </g>
+        {/* 左下 */}
+        <g transform="translate(420 360)">
+          <rect x="0" y="40" width="12" height="60" rx="6" fill="rgba(138,43,226,0.70)" />
+          <rect x="18" y="66" width="12" height="34" rx="6" fill="rgba(0,217,245,0.65)" />
+          <rect x="36" y="52" width="12" height="48" rx="6" fill="rgba(255,46,99,0.60)" />
+        </g>
+        {/* 右下 */}
+        <g transform="translate(730 360)">
+          <rect x="0" y="58" width="12" height="42" rx="6" fill="rgba(0,245,160,0.70)" />
+          <rect x="18" y="36" width="12" height="64" rx="6" fill="rgba(138,43,226,0.65)" />
+          <rect x="36" y="64" width="12" height="36" rx="6" fill="rgba(0,217,245,0.60)" />
+        </g>
+      </g>
+
+      {/* 中心音符 */}
+      <g filter="url(#glow)">
+        {/* 音符杆 */}
+        <path
+          d="M650 182 V380"
+          stroke="url(#noteGrad)"
+          strokeWidth="18"
+          strokeLinecap="round"
+        />
+        {/* 音符旗帜 */}
+        <path
+          d="M650 210
+             C690 210 714 190 744 190
+             C748 220 724 244 688 252
+             C672 256 660 260 650 266"
+          fill="none"
+          stroke="url(#noteGrad)"
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {/* 音符头 */}
+        <ellipse cx="600" cy="395" rx="54" ry="36" fill="rgba(0,217,245,0.18)" />
+        <ellipse cx="600" cy="395" rx="40" ry="26" fill="rgba(255,46,99,0.18)" />
+        <path
+          d="M560 395
+             C560 368 584 348 612 348
+             C640 348 662 366 662 392
+             C662 420 638 442 608 442
+             C580 442 560 420 560 395Z"
+          fill="rgba(34,211,238,0.22)"
+        />
+        <path
+          d="M560 395
+             C560 368 584 348 612 348
+             C640 348 662 366 662 392
+             C662 420 638 442 608 442
+             C580 442 560 420 560 395Z"
+          stroke="rgba(34,211,238,0.55)"
+          strokeWidth="3"
+        />
+      </g>
+
+      {/* 扫描线效果 */}
+      <g mask="url(#scanMask)" opacity="0.45">
+        <rect width="1200" height="600" fill="rgba(34,211,238,0.10)" />
+      </g>
+
+      {/* 底部标题 */}
+      <g opacity="0.9">
+        <text x="600" y="560" textAnchor="middle" fontSize="18" fill="rgba(148,163,184,0.75)">
+          四维声乐 · Multi-Dimensional Vocal Analysis
+        </text>
+      </g>
+    </svg>
+  </div>
+);
+
+
 // --- 歌曲配置 ---
 const SONGS = [
     {
@@ -140,14 +365,85 @@ const SettingsModal = ({ isOpen, onClose, config, onSave }) => {
 
 const NicknameModal = ({ isOpen, onSave }) => {
     const [name, setName] = useState("");
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) {
+            // Small delay to trigger animation
+            requestAnimationFrame(() => setMounted(true));
+        }
+    }, [isOpen]);
+
     if (!isOpen) return null;
+
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-in fade-in duration-300">
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-8 shadow-2xl text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-6"><User size={40} className="text-white" /></div>
-                <h2 className="text-2xl font-bold text-white mb-2">欢迎来到四维声乐</h2>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && name.trim() && onSave(name)} placeholder="请输入您的昵称" className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-center text-white focus:border-cyan-500 outline-none mb-6"/>
-                <button onClick={() => name.trim() && onSave(name)} disabled={!name.trim()} className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl font-bold">进入系统</button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden">
+            {/* Animated Background */}
+            <div className="absolute inset-0 bg-[#05070a]">
+                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-purple-600/20 rounded-full blur-[120px] animate-pulse" style={{animationDuration: '4s'}}></div>
+                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-cyan-600/20 rounded-full blur-[120px] animate-pulse" style={{animationDuration: '5s', animationDelay: '1s'}}></div>
+                <div className="absolute top-[20%] right-[20%] w-[30%] h-[30%] bg-blue-600/10 rounded-full blur-[100px] animate-pulse" style={{animationDuration: '6s', animationDelay: '2s'}}></div>
+                
+                {/* Grid Pattern Overlay */}
+                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+            </div>
+
+            {/* Glass Card */}
+            <div className={`relative bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl w-full max-w-md p-10 shadow-2xl text-center transform transition-all duration-700 ease-out ${mounted ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-10 scale-95'}`}>
+                
+                {/* Decorative Elements */}
+                <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent"></div>
+                <div className="absolute bottom-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-purple-500/50 to-transparent"></div>
+                
+                {/* Icon */}
+                <div className="relative w-24 h-24 mx-auto mb-8 group cursor-pointer">
+                    <div className="absolute inset-0 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-full blur-xl opacity-40 group-hover:opacity-70 transition-opacity duration-500 animate-pulse"></div>
+                    <div className="relative w-full h-full bg-gradient-to-br from-slate-800 to-slate-900 rounded-full flex items-center justify-center border border-white/10 shadow-2xl group-hover:scale-105 transition-transform duration-300">
+                        <User size={40} className="text-cyan-400 drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]" />
+                    </div>
+                </div>
+
+                {/* Text */}
+                <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-purple-300 mb-3 tracking-tight">
+                    四维声乐
+                </h2>
+                <p className="text-slate-400 text-sm mb-10 font-light tracking-wide">
+                    探索声音的无限可能 · AI 智能分析系统
+                </p>
+
+                {/* Input */}
+                <div className="relative mb-8 group">
+                    <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500/30 to-purple-500/30 rounded-xl blur opacity-0 group-hover:opacity-100 transition duration-500"></div>
+                    <input 
+                        type="text" 
+                        value={name} 
+                        onChange={(e) => setName(e.target.value)} 
+                        onKeyDown={(e) => e.key === 'Enter' && name.trim() && onSave(name)} 
+                        placeholder="请输入您的昵称" 
+                        className="relative w-full bg-slate-900/60 border border-slate-700/50 rounded-xl px-5 py-4 text-center text-white placeholder-slate-500 focus:border-cyan-500/50 focus:bg-slate-900/80 focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all duration-300"
+                    />
+                </div>
+
+                {/* Button */}
+                <button 
+                    onClick={() => name.trim() && onSave(name)} 
+                    disabled={!name.trim()} 
+                    className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all duration-300 relative overflow-hidden group
+                        ${name.trim() 
+                            ? 'bg-gradient-to-r from-cyan-600 to-purple-600 hover:shadow-[0_0_20px_rgba(8,145,178,0.4)] hover:scale-[1.02] active:scale-[0.98]' 
+                            : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                        }`}
+                >
+                    <span className="relative z-10 flex items-center justify-center gap-2">
+                        进入系统
+                        {name.trim() && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>}
+                    </span>
+                    {name.trim() && <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/0 via-white/20 to-cyan-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>}
+                </button>
+                
+                <div className="mt-8 text-[10px] text-slate-600 uppercase tracking-widest">
+                    AI Powered Vocal Analysis
+                </div>
             </div>
         </div>
     );
@@ -269,6 +565,7 @@ function normalizeSeriesLength(series, targetLength, fallbackSeries = []) {
     }
     return result;
 }
+
 export default function App() {
     const [config, setConfig] = useState(DEFAULT_CONFIG);
     const [showSettings, setShowSettings] = useState(false);
@@ -646,7 +943,7 @@ export default function App() {
                         <div className="hidden lg:flex flex-1 items-center justify-center bg-slate-950 relative">
                             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(88,166,255,0.05),transparent_50%)]"></div>
                             <div className="text-center text-slate-600 z-10 flex flex-col items-center gap-4">
-                                <Activity size={64} className="opacity-20 mx-auto"/>
+                                <FourDimVocalHero />
                                 <p className="text-sm tracking-widest uppercase">请在左侧录制您的演唱</p>
                             </div>
                         </div>
@@ -719,7 +1016,7 @@ export default function App() {
                     </main>
 
                     <aside className="ai-sidebar">
-                        <div className="ai-header">🤖 AI 深度教学建议</div>
+                        <div className="ai-header">🎓 AI 深度教学建议</div>
                         <div className="ai-body">
                             {resultData.ai_comment ? (
                                 <div style={{fontSize: '14px', color: '#cbd5e1', whiteSpace: 'pre-wrap'}}>{resultData.ai_comment}</div>
