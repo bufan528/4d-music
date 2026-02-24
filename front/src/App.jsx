@@ -212,6 +212,63 @@ const LeaderboardModal = ({ isOpen, onClose, data, songName, loading }) => {
 
 // --- App 主组件 ---
 const DEFAULT_CONFIG = { backendUrl: '', apiKey: '', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: '' };
+const CHART_MIN_POINTS = 60;
+const CHART_DEFAULT_PITCH = [65,68,72,70,75,82,85,82,78,80,85,90,88,85,82,80,85,90,92,85,80,85,88,90,92,95,90,88,85,82];
+const CHART_DEFAULT_TEMPO = [95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96];
+const CHART_DEFAULT_STABILITY = [70,72,70,68,72,75,70,65,60,65,70,75,70,68,70,72,75,70,65,62,65,70,75,72,70,68,70,72,75,70];
+
+function toNumericSeries(series) {
+    if (!Array.isArray(series)) return [];
+    return series.map((value) => {
+        if (value === null || value === undefined || value === '') return null;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    });
+}
+
+function normalizeSeriesLength(series, targetLength, fallbackSeries = []) {
+    const safeTarget = Math.max(2, targetLength || 0);
+    const source = toNumericSeries(series);
+    const fallback = toNumericSeries(fallbackSeries);
+    const values = source.some(v => v !== null) ? source : fallback;
+
+    if (!values.length || !values.some(v => v !== null)) return Array(safeTarget).fill(0);
+    if (values.length === 1) return Array(safeTarget).fill(values[0] ?? 0);
+
+    const firstValid = values.find(v => v !== null) ?? 0;
+    const lastValid = [...values].reverse().find(v => v !== null) ?? firstValid;
+    const edgeFilled = values.slice();
+
+    for (let i = 0; i < edgeFilled.length; i++) {
+        if (edgeFilled[i] !== null) break;
+        edgeFilled[i] = firstValid;
+    }
+    for (let i = edgeFilled.length - 1; i >= 0; i--) {
+        if (edgeFilled[i] !== null) break;
+        edgeFilled[i] = lastValid;
+    }
+
+    let lastSeen = edgeFilled[0];
+    for (let i = 0; i < edgeFilled.length; i++) {
+        if (edgeFilled[i] === null) edgeFilled[i] = lastSeen;
+        else lastSeen = edgeFilled[i];
+    }
+
+    if (edgeFilled.length === safeTarget) return edgeFilled;
+
+    const result = new Array(safeTarget).fill(0);
+    const sourceLastIndex = edgeFilled.length - 1;
+    for (let i = 0; i < safeTarget; i++) {
+        const sourcePos = (i * sourceLastIndex) / (safeTarget - 1);
+        const leftIndex = Math.floor(sourcePos);
+        const rightIndex = Math.min(sourceLastIndex, leftIndex + 1);
+        const ratio = sourcePos - leftIndex;
+        const leftValue = edgeFilled[leftIndex];
+        const rightValue = edgeFilled[rightIndex];
+        result[i] = leftValue + (rightValue - leftValue) * ratio;
+    }
+    return result;
+}
 export default function App() {
     const [config, setConfig] = useState(DEFAULT_CONFIG);
     const [showSettings, setShowSettings] = useState(false);
@@ -429,15 +486,26 @@ export default function App() {
         setTimeout(() => {
             const timeCtx = document.getElementById('timeSeriesChart');
             if (timeCtx) {
+                const rawTimeSeries = resultData.time_series || {};
+                const axisLength = Array.isArray(rawTimeSeries.axis) ? rawTimeSeries.axis.length : 0;
+                const pitchLength = Array.isArray(rawTimeSeries.user_pitch) ? rawTimeSeries.user_pitch.length : 0;
+                const tempoLength = Array.isArray(rawTimeSeries.tempo) ? rawTimeSeries.tempo.length : 0;
+                const stabilityLength = Array.isArray(rawTimeSeries.stability) ? rawTimeSeries.stability.length : 0;
+                const targetLength = Math.max(CHART_MIN_POINTS, axisLength, pitchLength, tempoLength, stabilityLength);
+                const labels = Array(targetLength).fill('');
+                const pitchData = normalizeSeriesLength(rawTimeSeries.user_pitch, targetLength, CHART_DEFAULT_PITCH);
+                const tempoData = normalizeSeriesLength(rawTimeSeries.tempo, targetLength, CHART_DEFAULT_TEMPO);
+                const stabilityData = normalizeSeriesLength(rawTimeSeries.stability, targetLength, CHART_DEFAULT_STABILITY);
+
                 if (timeSeriesRef.current) timeSeriesRef.current.destroy();
                 timeSeriesRef.current = new Chart(timeCtx, {
                     type: 'line',
                     data: {
-                        labels: resultData.time_series?.axis || Array(30).fill(''),
+                        labels,
                         datasets: [
                             {
                                 label: 'Pitch',
-                                data: resultData.time_series?.user_pitch || [65,68,72,70,75,82,85,82,78,80,85,90,88,85,82,80,85,90,92,85,80,85,88,90,92,95,90,88,85,82],
+                                data: pitchData,
                                 borderColor: '#a78bfa',
                                 borderWidth: 3,
                                 tension: 0.4,
@@ -446,7 +514,7 @@ export default function App() {
                             },
                             {
                                 label: 'Tempo',
-                                data: resultData.time_series?.tempo || [95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96],
+                                data: tempoData,
                                 borderColor: '#f0883e',
                                 borderWidth: 2,
                                 tension: 0.4,
@@ -455,7 +523,7 @@ export default function App() {
                             },
                             {
                                 label: 'Stability',
-                                data: resultData.time_series?.stability || [70,72,70,68,72,75,70,65,60,65,70,75,70,68,70,72,75,70,65,62,65,70,75,72,70,68,70,72,75,70],
+                                data: stabilityData,
                                 borderColor: '#2ea043',
                                 borderWidth: 2,
                                 tension: 0.4,
