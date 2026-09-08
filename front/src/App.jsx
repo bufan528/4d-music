@@ -791,43 +791,54 @@ export default function App() {
                 const targetLength = Math.max(CHART_MIN_POINTS, axisLength, pitchLength, tempoLength, stabilityLength);
                 const labels = Array(targetLength).fill('');
                 const pitchData = normalizeSeriesLength(rawTimeSeries.user_pitch, targetLength, CHART_DEFAULT_PITCH);
-                const tempoData = normalizeSeriesLength(rawTimeSeries.tempo, targetLength, CHART_DEFAULT_TEMPO);
-                const stabilityData = normalizeSeriesLength(rawTimeSeries.stability, targetLength, CHART_DEFAULT_STABILITY);
+                // [Fix] 只渲染有真实数据的维度，避免 tempo/stability 缺失时画预设假数据
+                const hasPitch = toNumericSeries(rawTimeSeries.user_pitch).some(v => v !== null);
+                const hasTempo = toNumericSeries(rawTimeSeries.tempo).some(v => v !== null);
+                const hasStability = toNumericSeries(rawTimeSeries.stability).some(v => v !== null);
+
+                const chartDatasets = [];
+                if (hasPitch) {
+                    chartDatasets.push({
+                        label: '音准',
+                        data: pitchData,
+                        borderColor: '#a78bfa',
+                        borderWidth: 3,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        fill: false
+                    });
+                }
+                if (hasTempo) {
+                    const tempoData = normalizeSeriesLength(rawTimeSeries.tempo, targetLength, CHART_DEFAULT_TEMPO);
+                    chartDatasets.push({
+                        label: '节奏',
+                        data: tempoData,
+                        borderColor: '#f0883e',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        fill: false
+                    });
+                }
+                if (hasStability) {
+                    const stabilityData = normalizeSeriesLength(rawTimeSeries.stability, targetLength, CHART_DEFAULT_STABILITY);
+                    chartDatasets.push({
+                        label: '稳定',
+                        data: stabilityData,
+                        borderColor: '#2ea043',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        fill: false
+                    });
+                }
 
                 if (timeSeriesRef.current) timeSeriesRef.current.destroy();
                 timeSeriesRef.current = new Chart(timeCtx, {
                     type: 'line',
                     data: {
                         labels,
-                        datasets: [
-                            {
-                                label: 'Pitch',
-                                data: pitchData,
-                                borderColor: '#a78bfa',
-                                borderWidth: 3,
-                                tension: 0.4,
-                                pointRadius: 0,
-                                fill: false
-                            },
-                            {
-                                label: 'Tempo',
-                                data: tempoData,
-                                borderColor: '#f0883e',
-                                borderWidth: 2,
-                                tension: 0.4,
-                                pointRadius: 0,
-                                fill: false
-                            },
-                            {
-                                label: 'Stability',
-                                data: stabilityData,
-                                borderColor: '#2ea043',
-                                borderWidth: 2,
-                                tension: 0.4,
-                                pointRadius: 0,
-                                fill: false
-                            }
-                        ]
+                        datasets: chartDatasets
                     },
                     options: {
                         responsive: true,
