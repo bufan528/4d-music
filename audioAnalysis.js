@@ -395,11 +395,36 @@ function shiftArray(arr, lag, fillValue = null) {
     return newArr;
 }
 
+/**
+ * 带状 DTW 成本矩阵辅助函数
+ * 原实现使用 N×M 全矩阵（4分钟歌约576MB），1G内存服务器会OOM。
+ * 改为带状存储：每行只存 [i-win, i+win] 范围内的列，内存降为 N×(2win+1)。
+ * 由于已有 lag 预对齐，DTW 只需处理局部节奏偏差，win=0.15*max(N,M) 足够。
+ */
+function makeBandedCost(N, M, win) {
+    const bandWidth = 2 * win + 1;
+    const cost = new Float32Array(N * bandWidth).fill(Infinity);
+    const colOffset = (i) => Math.max(0, i - win);
+    const inBand = (i, j) => {
+        if (i < 0 || i >= N || j < 0 || j >= M) return false;
+        const off = colOffset(i);
+        return j >= off && j < off + bandWidth;
+    };
+    const get = (i, j) => {
+        if (!inBand(i, j)) return Infinity;
+        return cost[i * bandWidth + (j - colOffset(i))];
+    };
+    const set = (i, j, v) => {
+        cost[i * bandWidth + (j - colOffset(i))] = v;
+    };
+    return { get, set, colOffset, bandWidth };
+}
+
 function alignToStandard(refPitch, userPitchRaw, userDynRaw) {
     // [Fix] 1. 先计算 Key Shift (基于原始数据)
     const preKeyShift = estimatePreAlignmentShift(refPitch, userPitchRaw);
 
-    // [Fix] 2. 将 Key Shift 传入 estimateLag，实现“带移调的延迟检测”
+    // [Fix] 2. 将 Key Shift 传入 estimateLag，实现"带移调的延迟检测"
     const lag = estimateLag(refPitch, userPitchRaw, preKeyShift);
 
     const userPitch = shiftArray(userPitchRaw, lag, null);
@@ -407,7 +432,9 @@ function alignToStandard(refPitch, userPitchRaw, userDynRaw) {
 
     const N = refPitch.length;
     const M = userPitch.length;
-    const win = Math.floor(Math.max(N, M) * 0.25);
+    // [Memory Fix] win 从 0.25 降到 0.15：已有 lag 预对齐，DTW 只需处理局部偏差
+    // 4分钟歌(12000帧)：win=1800, bandWidth=3601, 内存=12000*3601*4≈165MB（原576MB）
+    const win = Math.max(200, Math.floor(Math.max(N, M) * 0.15));
 
     const dist = (a, b) => {
         if (a == null && b == null) return 0;
@@ -415,50 +442,55 @@ function alignToStandard(refPitch, userPitchRaw, userDynRaw) {
         return Math.abs(a - (b - preKeyShift));
     };
 
-    const cost = new Float32Array(N * M).fill(Infinity);
+    // [Memory Fix] 使用带状成本矩阵替代 N×M 全矩阵
+    const banded = makeBandedCost(N, M, win);
+    const getCost = banded.get;
+    const setCost = banded.set;
 
+    // 初始化前 20x20（win 远大于 20，这些点都在 band 内）
     for(let i=0; i<Math.min(20, N); i++) {
         for(let j=0; j<Math.min(20, M); j++) {
-            cost[i*M + j] = dist(refPitch[i], userPitch[j]);
+            setCost(i, j, dist(refPitch[i], userPitch[j]));
         }
     }
 
+    // 带状填充
     for (let i = 0; i < N; i++) {
         const start = Math.max(0, i - win);
         const end = Math.min(M, i + win + 1);
         for (let j = start; j < end; j++) {
             if (i < 10 && j < 10) continue;
-            const idx = i * M + j;
             const d = dist(refPitch[i], userPitch[j]);
 
             let minPrev = Infinity;
-            if (i > 0) minPrev = Math.min(minPrev, cost[(i - 1) * M + j]);
-            if (j > 0) minPrev = Math.min(minPrev, cost[i * M + (j - 1)]);
+            if (i > 0) minPrev = Math.min(minPrev, getCost(i - 1, j));
+            if (j > 0) minPrev = Math.min(minPrev, getCost(i, j - 1));
             if (i > 0 && j > 0) {
-                const diagCost = cost[(i - 1) * M + (j - 1)];
+                const diagCost = getCost(i - 1, j - 1);
                 minPrev = Math.min(minPrev, diagCost * 0.98);
             }
 
-            if (minPrev !== Infinity) cost[idx] = d + minPrev;
+            if (minPrev !== Infinity) setCost(i, j, d + minPrev);
         }
     }
 
+    // 回溯路径
     const path = [];
     let i = N - 1, j = M - 1;
 
-    if (cost[i * M + j] === Infinity) {
+    if (getCost(i, j) === Infinity) {
         let minVal = Infinity;
         let bestJ = M - 1;
         let bestI = N - 1;
 
         for(let k = 0; k < N; k++) {
-            const val = cost[k * M + (M-1)];
+            const val = getCost(k, M - 1);
             if(val < minVal) { minVal = val; bestI = k; bestJ = M-1; }
         }
 
         const searchRange = Math.max(win, 1000);
         for(let k = Math.max(0, M - searchRange); k < M; k++) {
-            const val = cost[(N-1) * M + k];
+            const val = getCost(N - 1, k);
             if(val < minVal) { minVal = val; bestJ = k; bestI = N-1; }
         }
 
@@ -466,9 +498,9 @@ function alignToStandard(refPitch, userPitchRaw, userDynRaw) {
         j = bestJ;
     }
 
-    if (cost[i * M + j] === Infinity) {
+    if (getCost(i, j) === Infinity) {
         for(let k = N - 1; k >= 0; k--) {
-            if (cost[k * M + (M-1)] !== Infinity) {
+            if (getCost(k, M - 1) !== Infinity) {
                 i = k; j = M - 1; break;
             }
         }
@@ -478,9 +510,9 @@ function alignToStandard(refPitch, userPitchRaw, userDynRaw) {
         path.push([i, j]);
         let u = Infinity, l = Infinity, d = Infinity;
 
-        if (i > 0) u = cost[(i - 1) * M + j];
-        if (j > 0) l = cost[i * M + (j - 1)];
-        if (i > 0 && j > 0) d = cost[(i - 1) * M + (j - 1)];
+        if (i > 0) u = getCost(i - 1, j);
+        if (j > 0) l = getCost(i, j - 1);
+        if (i > 0 && j > 0) d = getCost(i - 1, j - 1);
 
         const minVal = Math.min(u, l, d);
         if (minVal === Infinity) break;

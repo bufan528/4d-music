@@ -1,0 +1,32 @@
+# 四维声乐后端 docker-compose 配置
+# 使用方法：docker-compose up -d --build
+version: '3.8'
+
+services:
+  4d-vocal-backend:
+    build: .
+    container_name: 4d-vocal-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM 配置（可选，不填则 AI 点评显示"未连接"）
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
+      # 可选：设置后 /analyze 接口需要携带 x-api-token 请求头，防止被滥用刷 LLM 额度
+      - API_TOKEN=${API_TOKEN:-}
+      - PORT=8000
+    volumes:
+      # 持久化排行榜数据
+      - ./leaderboard.json:/app/leaderboard.json
+      # 持久化处理后的音频文件（可选，调试用）
+      - ./processed:/app/processed
+      - ./uploads:/app/uploads
+    # 内存限制（DTW 带状改造后，1G 内存足够）
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M

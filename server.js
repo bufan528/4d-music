@@ -14,15 +14,22 @@ const {
 } = require('./audioAnalysis');
 
 const app = express();
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 
 // 排行榜文件路径
 const LEADERBOARD_FILE = path.join(__dirname, 'leaderboard.json');
 
+// --- 安全配置 ---
+// 上传文件大小限制：20MB
+const MAX_UPLOAD_SIZE = 20 * 1024 * 1024;
+// 昵称白名单：中英文、数字、下划线、短横线，长度1-20
+const NICKNAME_REGEX = /^[\u4e00-\u9fa5a-zA-Z0-9_\-]{1,20}$/;
+// 可选：设置 API_TOKEN 环境变量后，/analyze 需要携带令牌才能调用（防刷 LLM 额度）
+const REQUIRED_TOKEN = process.env.API_TOKEN || '';
+
 // --- 中间件配置 ---
 
 // [DEBUG] 1. 全局请求日志 (最先执行)
-// 如果请求到达服务器，你一定会在控制台看到打印
 app.use((req, res, next) => {
     console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
     next();
@@ -68,18 +75,17 @@ const updateLeaderboard = (songId, nickname, totalScore, detailedScores) => {
 
 // [DEBUG] 2. 版本检测接口
 app.get('/version', (req, res) => {
-    res.send('Backend v3.0 (Leaderboard Enabled) is running!');
+    res.send('Backend v3.1 (Leaderboard + Security Hardened) is running!');
 });
 
 // [API] 排行榜接口
 app.get('/leaderboard', (req, res) => {
     const songId = req.query.songId;
-    console.log(`[API] 获取排行榜请求, songId: ${songId}`); // 确认逻辑执行
+    console.log(`[API] 获取排行榜请求, songId: ${songId}`);
 
     const data = getLeaderboardData();
 
     if (songId) {
-        // 返回特定歌曲的数组，如果没有则返回空数组
         const list = data[songId] || [];
         return res.json({ success: true, data: list });
     }
@@ -87,8 +93,11 @@ app.get('/leaderboard', (req, res) => {
 });
 
 // [API] 上传分析接口
-const upload = multer({ dest: 'uploads/' });
-['uploads', 'processed'].forEach(dir => { if(!fs.existsSync(dir)) fs.mkdirSync(dir); });
+const upload = multer({
+    dest: 'uploads/',
+    limits: { fileSize: MAX_UPLOAD_SIZE }
+});
+['uploads', 'processed'].forEach(dir => { if(!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
 
 // 配置
 const DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
@@ -126,8 +135,10 @@ const callLLM = async (ctx, scores, config) => {
 const SONGS_METADATA = [
     { id: 'yicheng', filename: '一程山路[vocals].mp3', name: '一程山路' },
     { id: 'ruyuan', filename: '如愿[vocals].mp3', name: '如愿' },
-    { id: 'xxy', filename: '小幸运.mp3', name: '小幸运' }
+    { id: 'xxy', filename: '小幸运[vocals].mp3', name: '小幸运' }
 ];
+
+const VALID_SONG_IDS = new Set(SONGS_METADATA.map(s => s.id));
 
 const referenceLibrary = new Map();
 
@@ -163,11 +174,31 @@ const initReferenceLibrary = async () => {
 initReferenceLibrary();
 
 app.post('/analyze', upload.single('file'), async (req, res) => {
+    // [Security] 可选令牌鉴权：设置 API_TOKEN 后必须携带
+    if (REQUIRED_TOKEN) {
+        const token = req.headers['x-api-token'] || req.query.token;
+        if (token !== REQUIRED_TOKEN) {
+            return res.status(401).json({ error: '未授权：缺少或无效的 API Token' });
+        }
+    }
+
     if(!req.file) return res.status(400).json({error: 'No file'});
 
-    const nickname = req.body.nickname || 'guest';
+    // [Security] 昵称白名单校验（防路径穿越 + 防注入）
+    const rawNickname = (req.body.nickname || 'guest').trim();
+    if (!NICKNAME_REGEX.test(rawNickname)) {
+        return res.status(400).json({ error: '昵称只能包含中英文、数字、下划线或短横线，长度1-20个字符' });
+    }
+    const nickname = rawNickname;
+
+    // [Security] 歌曲ID必须在库中
     const songId = req.body.songId || 'yicheng';
+    if (!VALID_SONG_IDS.has(songId)) {
+        return res.status(400).json({ error: '无效的歌曲ID' });
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    // 安全文件名：nickname 和 songId 已通过白名单校验，不会包含路径分隔符
     const targetFilename = `${nickname}_${songId}_${timestamp}.wav`;
     const inputPath = req.file.path;
     const outputPath = path.join('processed', targetFilename);
