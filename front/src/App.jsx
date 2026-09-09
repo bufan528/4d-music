@@ -320,9 +320,9 @@ const SettingsModal = ({ isOpen, onClose, config, onSave }) => {
     const testConnection = async () => {
         setTestStatus('loading');
         setTestMsg("正在连接后端...");
-        const url = localConfig.backendUrl ? `${localConfig.backendUrl.replace(/\/$/, '')}/analyze` : '/analyze';
+        const url = localConfig.backendUrl ? `${localConfig.backendUrl.replace(/\/$/, '')}/version` : '/version';
         try {
-            await axios.post(url, {}, { timeout: 3000 });
+            await axios.get(url, { timeout: 5000 });
             setTestStatus('success'); setTestMsg("连接成功！后端服务在线。");
         } catch (e) {
             if (e.response) { setTestStatus('success'); setTestMsg(`连接成功！(服务响应: ${e.response.status})`); }
