@@ -16,6 +16,8 @@ services:
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       # 可选：设置后 /analyze 接口需要携带 x-api-token 请求头，防止被滥用刷 LLM 额度
       - API_TOKEN=${API_TOKEN:-}
+      # 【安全】允许跨域调用的前端域名，多个用逗号分隔；不填则允许所有来源（不推荐）
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       - PORT=8000
     volumes:
       # 持久化处理后的音频文件（可选，调试用）
