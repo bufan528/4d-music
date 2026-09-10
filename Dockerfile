@@ -17,8 +17,8 @@ WORKDIR /app
 # 复制依赖清单（利用 Docker 缓存）
 COPY package*.json ./
 
-# 安装生产依赖
-RUN npm install --production --registry=https://registry.npmmirror.com
+# 安装生产依赖（若已执行过 npm install 更新 package-lock.json，可改为 npm ci 获得可复现构建）
+RUN npm install --omit=dev --registry=https://registry.npmmirror.com
 
 # 复制源代码
 COPY . .

@@ -1,6 +1,6 @@
 # 四维声乐后端 docker-compose 配置
-# 使用方法：docker-compose up -d --build
-version: '3.8'
+# 使用方法：docker compose up -d --build
+# 注：顶层 version 字段已废弃，Compose V2 不再需要声明
 
 services:
   4d-vocal-backend:

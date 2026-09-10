@@ -1,0 +1,37 @@
+# 构建上下文排除清单
+# 没有这个文件时，Dockerfile 的 `COPY . .` 会把本地 .env（含 LLM_API_KEY）
+# 一并烘焙进镜像层造成密钥泄漏，也会把 .git / node_modules 拖进构建上下文。
+
+# 版本控制与本地配置
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# 依赖（镜像内重新安装）
+node_modules
+front/node_modules
+
+# 运行时产物
+uploads
+processed
+leaderboard.json
+
+# 构建产物与日志
+dist
+front/dist
+build
+*.log
+npm-debug.log*
+
+# 编辑器 / 系统文件
+.vscode
+.idea
+*.iml
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
