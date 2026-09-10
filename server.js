@@ -4,14 +4,8 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { Worker } = require('worker_threads');
 const OpenAI = require('openai');
-const {
-    convertToWav,
-    analyzeAudio,
-    alignToStandard,
-    scorePerformance,
-    generateDiagnosticReport
-} = require('./audioAnalysis');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -20,16 +14,72 @@ const PORT = process.env.PORT || 8000;
 const LEADERBOARD_FILE = path.join(__dirname, 'leaderboard.json');
 
 // --- 安全配置 ---
-// 上传文件大小限制：20MB
 const MAX_UPLOAD_SIZE = 20 * 1024 * 1024;
-// 昵称白名单：中英文、数字、下划线、短横线，长度1-20
 const NICKNAME_REGEX = /^[\u4e00-\u9fa5a-zA-Z0-9_\-]{1,20}$/;
-// 可选：设置 API_TOKEN 环境变量后，/analyze 需要携带令牌才能调用（防刷 LLM 额度）
 const REQUIRED_TOKEN = process.env.API_TOKEN || '';
 
-// --- 中间件配置 ---
+// --- 性能优化配置（针对 1G 内存服务器）---
+const MAX_CONCURRENT_ANALYSIS = 1;   // 同时最多 1 个分析任务（避免 OOM）
+const MAX_QUEUE_LENGTH = 5;           // 最多排队 5 个请求
+const ANALYSIS_TIMEOUT_MS = 120000;   // 单任务超时 120 秒
 
-// [DEBUG] 1. 全局请求日志 (最先执行)
+// --- Worker 线程池 + 请求队列 ---
+let activeAnalysisCount = 0;
+const analysisQueue = [];
+
+function createAnalysisWorker(task) {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker(path.join(__dirname, 'analysisWorker.js'));
+        const timeout = setTimeout(() => {
+            worker.terminate();
+            reject(new Error('分析超时，请缩短录音时间或稍后重试'));
+        }, ANALYSIS_TIMEOUT_MS);
+
+        worker.on('message', (msg) => {
+            clearTimeout(timeout);
+            worker.terminate();
+            if (msg.success) resolve(msg.result);
+            else reject(new Error(msg.error));
+        });
+
+        worker.on('error', (err) => {
+            clearTimeout(timeout);
+            reject(err);
+        });
+
+        worker.postMessage(task);
+    });
+}
+
+async function processAnalysisQueue() {
+    if (activeAnalysisCount >= MAX_CONCURRENT_ANALYSIS || analysisQueue.length === 0) return;
+
+    activeAnalysisCount++;
+    const item = analysisQueue.shift();
+
+    try {
+        const result = await createAnalysisWorker(item.task);
+        item.resolve(result);
+    } catch (e) {
+        item.reject(e);
+    } finally {
+        activeAnalysisCount--;
+        // 处理下一个排队任务
+        setImmediate(processAnalysisQueue);
+    }
+}
+
+function enqueueAnalysis(task) {
+    return new Promise((resolve, reject) => {
+        if (analysisQueue.length >= MAX_QUEUE_LENGTH) {
+            return reject(new Error('服务器繁忙，请稍后重试（队列已满）'));
+        }
+        analysisQueue.push({ task, resolve, reject });
+        processAnalysisQueue();
+    });
+}
+
+// --- 中间件 ---
 app.use((req, res, next) => {
     console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
     next();
@@ -71,20 +121,27 @@ const updateLeaderboard = (songId, nickname, totalScore, detailedScores) => {
     }
 };
 
-// --- API 路由 (必须放在 static 之前) ---
-
-// [DEBUG] 2. 版本检测接口
+// --- API 路由 ---
 app.get('/version', (req, res) => {
-    res.send('Backend v3.1 (Leaderboard + Security Hardened) is running!');
+    res.send('Backend v3.2 (Worker Threads + Queue Optimized) is running!');
 });
 
-// [API] 排行榜接口
+// 健康检查端点（含队列状态）
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        activeAnalysis: activeAnalysisCount,
+        queueLength: analysisQueue.length,
+        maxConcurrent: MAX_CONCURRENT_ANALYSIS,
+        maxQueue: MAX_QUEUE_LENGTH,
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+    });
+});
+
 app.get('/leaderboard', (req, res) => {
     const songId = req.query.songId;
-    console.log(`[API] 获取排行榜请求, songId: ${songId}`);
-
     const data = getLeaderboardData();
-
     if (songId) {
         const list = data[songId] || [];
         return res.json({ success: true, data: list });
@@ -92,19 +149,18 @@ app.get('/leaderboard', (req, res) => {
     res.json({ success: true, data: data });
 });
 
-// [API] 上传分析接口
+// --- 上传配置 ---
 const upload = multer({
     dest: 'uploads/',
     limits: { fileSize: MAX_UPLOAD_SIZE }
 });
 ['uploads', 'processed'].forEach(dir => { if(!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
 
-// 配置
+// --- LLM 配置 ---
 const DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
 const DEFAULT_BASE_URL = process.env.LLM_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
 const DEFAULT_MODEL = process.env.LLM_MODEL_NAME || "";
 
-// LLM 调用封装
 const callLLM = async (ctx, scores, config) => {
     const key = config.key || DEFAULT_API_KEY;
     const base = config.base || DEFAULT_BASE_URL;
@@ -131,7 +187,7 @@ const callLLM = async (ctx, scores, config) => {
     }
 };
 
-// --- 歌曲库配置 ---
+// --- 歌曲库 ---
 const SONGS_METADATA = [
     { id: 'yicheng', filename: '一程山路[vocals].mp3', name: '一程山路' },
     { id: 'ruyuan', filename: '如愿[vocals].mp3', name: '如愿' },
@@ -139,7 +195,6 @@ const SONGS_METADATA = [
 ];
 
 const VALID_SONG_IDS = new Set(SONGS_METADATA.map(s => s.id));
-
 const referenceLibrary = new Map();
 
 const initReferenceLibrary = async () => {
@@ -150,6 +205,7 @@ const initReferenceLibrary = async () => {
             console.log(`[Loading] ${song.name} (${song.filename})...`);
             const tmp = path.join('processed', `ref_${song.id}.wav`);
             try {
+                const { convertToWav, analyzeAudio } = require('./audioAnalysis');
                 await convertToWav(p, tmp);
                 const res = await analyzeAudio(tmp);
                 referenceLibrary.set(song.id, {
@@ -173,8 +229,9 @@ const initReferenceLibrary = async () => {
 
 initReferenceLibrary();
 
+// --- 核心分析接口 ---
 app.post('/analyze', upload.single('file'), async (req, res) => {
-    // [Security] 可选令牌鉴权：设置 API_TOKEN 后必须携带
+    // 安全校验
     if (REQUIRED_TOKEN) {
         const token = req.headers['x-api-token'] || req.query.token;
         if (token !== REQUIRED_TOKEN) {
@@ -184,50 +241,58 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
 
     if(!req.file) return res.status(400).json({error: 'No file'});
 
-    // [Security] 昵称白名单校验（防路径穿越 + 防注入）
     const rawNickname = (req.body.nickname || 'guest').trim();
     if (!NICKNAME_REGEX.test(rawNickname)) {
         return res.status(400).json({ error: '昵称只能包含中英文、数字、下划线或短横线，长度1-20个字符' });
     }
     const nickname = rawNickname;
 
-    // [Security] 歌曲ID必须在库中
     const songId = req.body.songId || 'yicheng';
     if (!VALID_SONG_IDS.has(songId)) {
         return res.status(400).json({ error: '无效的歌曲ID' });
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    // 安全文件名：nickname 和 songId 已通过白名单校验，不会包含路径分隔符
     const targetFilename = `${nickname}_${songId}_${timestamp}.wav`;
     const inputPath = req.file.path;
     const outputPath = path.join('processed', targetFilename);
+    const refData = referenceLibrary.get(songId);
 
     try {
-        console.log(`[处理] 用户: ${nickname}, 歌曲ID: ${songId}`);
-        await convertToWav(inputPath, outputPath);
+        console.log(`[处理] 用户: ${nickname}, 歌曲: ${songId}, 队列: ${analysisQueue.length}, 活跃: ${activeAnalysisCount}`);
 
-        const userAnalysis = await analyzeAudio(outputPath);
-        const refData = referenceLibrary.get(songId);
+        // 将 CPU 密集型分析放入 Worker 线程 + 队列限流
+        const analysisResult = await enqueueAnalysis({
+            inputPath,
+            outputPath,
+            songId,
+            refData: refData ? {
+                pitch: refData.pitch,
+                dynamics: refData.dynamics,
+                axis: refData.axis,
+                features: refData.features
+            } : null
+        });
 
+        // 主线程构建响应（轻量操作）
         const responseData = {
             success: true,
             time_series: {
-                axis: userAnalysis.time_series.axis,
-                user_pitch: userAnalysis.time_series.pitch,
-                dynamics: userAnalysis.time_series.dynamics,
+                axis: analysisResult.time_series.axis,
+                user_pitch: analysisResult.time_series.pitch,
+                dynamics: analysisResult.time_series.dynamics,
                 standard_pitch: []
             },
             scores: {},
-            cavity_data: userAnalysis.features.resonance,
+            cavity_data: analysisResult.features.resonance,
             detailed_analysis: null,
             ai_comment: ""
         };
 
-        if(refData) {
-            const aligned = alignToStandard(refData.pitch, userAnalysis.time_series.pitch, userAnalysis.time_series.dynamics);
-            const scoreResult = scorePerformance(refData.pitch, aligned.pitch, refData.features, userAnalysis.features);
-            const diagnosis = generateDiagnosticReport(aligned.pitch, refData.pitch, refData.axis);
+        if (analysisResult.aligned && analysisResult.scoreResult) {
+            const aligned = analysisResult.aligned;
+            const scoreResult = analysisResult.scoreResult;
+            const diagnosis = analysisResult.diagnosis;
 
             responseData.time_series.user_pitch = aligned.pitch;
             responseData.time_series.dynamics = aligned.dynamics;
@@ -241,7 +306,7 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
                 tension: scoreResult.details.emotion,
                 technique: scoreResult.details.technique,
                 articulation: scoreResult.details.pitch,
-                range: Math.min(100, userAnalysis.features.range * 3.5),
+                range: Math.min(100, analysisResult.features.range * 3.5),
                 emotion: scoreResult.details.emotion,
                 rank: scoreResult.rank,
                 fittedPitch: scoreResult.fittedPitch
@@ -263,10 +328,16 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
                 rank: scoreResult.rank
             });
 
-            const resMode = userAnalysis.features.resonance.head > 0.6 ? "头腔主导" :
-                (userAnalysis.features.resonance.chest > 0.6 ? "胸腔主导" : "混合共鸣");
-            const llmContext = { key_offset: scoreResult.details.keyOffset, jitter_val: (userAnalysis.features.jitter * 100).toFixed(2), vibrato_detected: userAnalysis.features.vibrato > 10, resonance_mode: resMode };
+            const resMode = analysisResult.features.resonance.head > 0.6 ? "头腔主导" :
+                (analysisResult.features.resonance.chest > 0.6 ? "胸腔主导" : "混合共鸣");
+            const llmContext = {
+                key_offset: scoreResult.details.keyOffset,
+                jitter_val: (analysisResult.features.jitter * 100).toFixed(2),
+                vibrato_detected: analysisResult.features.vibrato > 10,
+                resonance_mode: resMode
+            };
 
+            // LLM 调用是网络 IO，留在主线程不阻塞
             responseData.ai_comment = await callLLM(llmContext, responseData.scores, {
                 key: req.headers['x-api-key'],
                 base: req.headers['x-api-base'],
@@ -288,15 +359,19 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
         res.json(responseData);
 
     } catch(e) {
-        console.error("Process Error:", e);
-        res.status(500).json({error: e.message});
+        console.error("Process Error:", e.message);
+        const isBusy = e.message.includes('队列已满') || e.message.includes('超时');
+        res.status(isBusy ? 503 : 500).json({ error: e.message });
     } finally {
         try { if(fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
     }
 });
 
-// [重要] 最后才加载静态文件，防止 /leaderboard 被当成文件名寻找
+// 静态文件
 app.use(express.static(__dirname));
 
-// 启动监听
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// 启动
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`[性能优化] Worker线程池: 并发=${MAX_CONCURRENT_ANALYSIS}, 队列=${MAX_QUEUE_LENGTH}, 超时=${ANALYSIS_TIMEOUT_MS/1000}s`);
+});
