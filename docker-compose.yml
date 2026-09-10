@@ -18,8 +18,6 @@ services:
       - API_TOKEN=${API_TOKEN:-}
       - PORT=8000
     volumes:
-      # 持久化排行榜数据
-      - ./leaderboard.json:/app/leaderboard.json
       # 持久化处理后的音频文件（可选，调试用）
       - ./processed:/app/processed
       - ./uploads:/app/uploads

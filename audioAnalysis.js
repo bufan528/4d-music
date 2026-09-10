@@ -251,7 +251,9 @@ const analyzeAudio = async (filePath) => {
     const bSize = 2048;
     const fft = new DSP.FFT(bSize, sr);
 
-    const timeAxis=[], rawPitch=[], dyn=[], eng=[], centroids=[], allSpectra=[];
+    const timeAxis=[], rawPitch=[], dyn=[], eng=[], centroids=[];
+    // 频谱只在计算时临时保存，计算完频谱通量后立即释放（节省内存）
+    const allSpectra = [];
 
     let totalEnergy = 0;
     let energyCount = 0;
@@ -312,15 +314,15 @@ const analyzeAudio = async (filePath) => {
     const rangeSemitones = calcVocalRange(validFreqs);
     const vibratoDepth = detectVibrato(validFreqs, sr, hop);
     const flux = calcSpectralFlux(allSpectra);
+    // 释放频谱数组（4分钟歌约39MB内存），后续不再需要
+    allSpectra.length = 0;
     const articulationMetric = Math.min(100, Math.max(50, flux * 80));
 
     return {
         time_series: {
             axis: timeAxis,
             pitch: smoothPitch,
-            raw_pitch: cleanedPitch,
-            dynamics: dyn,
-            energy: eng
+            dynamics: dyn
         },
         features: {
             jitter: jitter,
