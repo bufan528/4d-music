@@ -609,7 +609,10 @@ export default function App() {
         const baseUrl = config.backendUrl ? config.backendUrl.replace(/\/$/, '') : '';
         const songUrl = currentSong.file.startsWith('http') ? currentSong.file : `${baseUrl}${currentSong.file}`;
         audioMusicRef.current = new Audio(songUrl);
-        audioMusicRef.current.onended = () => setIsMusicPlaying(false);
+        audioMusicRef.current.onended = () => {
+            setIsMusicPlaying(false);
+            audioMusicRef.current.currentTime = 0; // 播放结束后重置到开头，允许重复播放
+        };
         audioMusicRef.current.onerror = (e) => {
             console.error("Audio Load Error:", e);
         };
@@ -660,6 +663,10 @@ export default function App() {
             setIsMusicPlaying(false);
         } else {
             try {
+                // 如果已经播放到末尾，重置到开头
+                if (audioMusicRef.current.currentTime >= audioMusicRef.current.duration - 0.1) {
+                    audioMusicRef.current.currentTime = 0;
+                }
                 await audioMusicRef.current.play();
                 setIsMusicPlaying(true);
             } catch (err) {
@@ -908,7 +915,7 @@ export default function App() {
                                     <div className="w-full text-center px-4">
                                         <h3 className="text-cyan-400 text-xs font-bold uppercase tracking-widest mb-3 opacity-80">Selected Song</h3>
                                         <div className="text-xl font-serif text-slate-200 leading-relaxed drop-shadow-md mb-2">{currentSong.name}</div>
-                                        <p className="text-xs text-slate-400 italic line-clamp-3">“{currentSong.lyrics}”</p>
+                                        <p className="text-xs text-slate-400 italic line-clamp-3">"{currentSong.lyrics}"</p>
                                     </div>
                                     <div className="w-full bg-slate-800/40 p-5 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-slate-600 transition">
                                         <div className="flex items-center gap-4">
