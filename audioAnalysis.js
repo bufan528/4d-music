@@ -178,23 +178,6 @@ function calcShimmer(energies) {
     return (sumDiff / count) / (sumAmp / count);
 }
 
-function calcSpectralFlux(spectra) {
-    if (spectra.length < 2) return 0;
-    let totalFlux = 0;
-    for (let i = 1; i < spectra.length; i++) {
-        let flux = 0;
-        const curr = spectra[i];
-        const prev = spectra[i-1];
-        const len = Math.floor(Math.min(curr.length, prev.length) * 0.5);
-        for (let j = 0; j < len; j++) {
-            const diff = curr[j] - prev[j];
-            if (diff > 0) flux += diff;
-        }
-        totalFlux += flux;
-    }
-    return totalFlux / spectra.length;
-}
-
 function detectVibrato(freqs, sampleRate, hopSize) {
     let vibratoFrames = 0;
     const dt = hopSize / sampleRate;
@@ -252,8 +235,11 @@ const analyzeAudio = async (filePath) => {
     const fft = new DSP.FFT(bSize, sr);
 
     const timeAxis=[], rawPitch=[], dyn=[], eng=[], centroids=[];
-    // 频谱只在计算时临时保存，计算完频谱通量后立即释放（节省内存）
-    const allSpectra = [];
+    // [内存优化] 频谱通量改为流式计算：只保留上一帧频谱，不再累积全部帧。
+    // 原实现把每帧 1024 点 Float64Array 全部留存，4 分钟歌约 98MB 常驻内存。
+    let prevSpectrum = null;
+    let fluxAccum = 0;
+    let fluxFrames = 0;
 
     let totalEnergy = 0;
     let energyCount = 0;
@@ -278,7 +264,18 @@ const analyzeAudio = async (filePath) => {
         const windowedChunk = applyHanningWindow(chunk);
         fft.forward(Array.from(windowedChunk));
         const spec = Float64Array.from(fft.spectrum);
-        allSpectra.push(spec);
+        // [内存优化] 流式累加频谱通量：只与上一帧比较，不再累积全部频谱
+        if (prevSpectrum) {
+            let f = 0;
+            const len = Math.floor(Math.min(spec.length, prevSpectrum.length) * 0.5);
+            for (let k = 0; k < len; k++) {
+                const diff = spec[k] - prevSpectrum[k];
+                if (diff > 0) f += diff;
+            }
+            fluxAccum += f;
+            fluxFrames++;
+        }
+        prevSpectrum = spec;
 
         let num=0, den=0;
         for(let k=0; k<spec.length; k++){ num += k*spec[k]; den += spec[k]; }
@@ -301,6 +298,10 @@ const analyzeAudio = async (filePath) => {
     const validFreqs = cleanedPitch.filter(x => x !== null);
     const smoothPitch = medianFilter(cleanedPitch, 5);
 
+    // 有效音高帧统计：供上游判断"是否真的有人声"，避免对静音/噪声给出虚高评分
+    const validPitchFrames = validFreqs.length;
+    const totalFrames = cleanedPitch.length;
+
     const avgCentroid = centroids.length > 0 ? centroids.reduce((a,b)=>a+b,0)/centroids.length : 0;
     const binResolution = sr / bSize;
     const avgCentroidHz = avgCentroid * binResolution;
@@ -313,9 +314,8 @@ const analyzeAudio = async (filePath) => {
     const shimmer = calcShimmer(eng);
     const rangeSemitones = calcVocalRange(validFreqs);
     const vibratoDepth = detectVibrato(validFreqs, sr, hop);
-    const flux = calcSpectralFlux(allSpectra);
-    // 释放频谱数组（4分钟歌约39MB内存），后续不再需要
-    allSpectra.length = 0;
+    // 流式频谱通量：与原 calcSpectralFlux(全部帧) 数值等价，分母为总帧数
+    const flux = fluxFrames > 0 ? fluxAccum / (fluxFrames + 1) : 0;
     const articulationMetric = Math.min(100, Math.max(50, flux * 80));
 
     return {
@@ -330,6 +330,8 @@ const analyzeAudio = async (filePath) => {
             vibrato: vibratoDepth,
             range: rangeSemitones,
             articulation: articulationMetric,
+            validPitchFrames: validPitchFrames,
+            totalFrames: totalFrames,
             resonance: { head: headIntensity, chest: chestIntensity, centroid: avgCentroidHz }
         }
     };
@@ -567,7 +569,10 @@ function alignToStandard(refPitch, userPitchRaw, userDynRaw) {
         stdError += slopePenalty;
     }
 
-    const rhythmScore = Math.max(0, 100 - (Math.max(0, stdError - 3) * 0.5));
+    // [正确性修复] 对齐点不足时不得给满分：此前无音高输入会因 dist(null,null)=0 走出"完美"对角路径
+    const rhythmScore = validPoints > 10
+        ? Math.max(0, 100 - (Math.max(0, stdError - 3) * 0.5))
+        : 0;
 
     path.forEach(([refIdx, userIdx]) => {
         const pitchVal = userPitch[userIdx];
@@ -611,8 +616,6 @@ function scorePerformance(refPitch, userPitch, refFeatures, userFeatures) {
     diffs.sort((a, b) => a - b);
     const avgOffset = diffs.length > 0 ? diffs[Math.floor(diffs.length / 2)] : 0;
 
-    const fittedPitch = userPitch.map(p => p !== null ? p - avgOffset : null);
-
     for (let i = 0; i < refPitch.length; i++) {
         const r = refPitch[i];
         if (r !== null && r > 0) {
@@ -637,8 +640,10 @@ function scorePerformance(refPitch, userPitch, refFeatures, userFeatures) {
 
     const pitchAccuracy = totalFrames > 0 ? totalScore / totalFrames : 0;
 
+    // [正确性修复] 用户无有效音高时 jitter 恒为 0，此前会被误判成"极其稳定"而拿满分
+    const hasUserPitch = (userFeatures.validPitchFrames || 0) > 0;
     const jitterDiff = Math.max(0, userFeatures.jitter - refFeatures.jitter - 0.01);
-    const stabilityScore = Math.max(0, 100 - (jitterDiff * 300));
+    const stabilityScore = hasUserPitch ? Math.max(0, 100 - (jitterDiff * 300)) : 0;
 
     let techniqueScore = 70;
     if (refFeatures.vibrato > 10) {
@@ -677,7 +682,6 @@ function scorePerformance(refPitch, userPitch, refFeatures, userFeatures) {
             keyOffset: Math.round(avgOffset),
             range: Math.floor(rangeScore)
         },
-        fittedPitch: fittedPitch,
         rank: rank
     };
 }

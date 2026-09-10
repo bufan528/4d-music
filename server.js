@@ -29,6 +29,9 @@ const MAX_CONCURRENT_ANALYSIS = 1;
 const MAX_QUEUE_LENGTH = 5;
 const ANALYSIS_TIMEOUT_MS = 120000;
 
+// 有效音高帧占比下限：低于该比例视为"没有唱"，直接拒绝而不是给出虚高分数
+const MIN_VALID_PITCH_RATIO = 0.05;
+
 // ==========================================
 // 排行榜（修复 EISDIR bug）
 // ==========================================
@@ -149,7 +152,8 @@ function getLLMClient(key, base) {
 
 const callLLM = async (ctx, scores, config) => {
     const key = config.key || DEFAULT_API_KEY;
-    const base = config.base || DEFAULT_BASE_URL;
+    // [安全修复] baseURL 是 SSRF 敏感项，只允许来自服务端环境变量，绝不接受客户端输入
+    const base = DEFAULT_BASE_URL;
     const model = config.model || DEFAULT_MODEL;
 
     if (!key || key.length < 5) return "AI建议服务未连接。";
@@ -218,7 +222,10 @@ const initReferenceLibrary = async () => {
 // 中间件
 // ==========================================
 app.use((req, res, next) => {
-    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+    // [安全修复] 日志脱敏：避免 token 等敏感参数随 URL 落到访问日志里
+    const safeUrl = String(req.originalUrl || req.url)
+        .replace(/([?&](?:token|api_key|apikey|key)=)[^&]*/gi, '$1***');
+    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${safeUrl}`);
     next();
 });
 
@@ -274,7 +281,8 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
 
     // API Token 校验
     if (REQUIRED_TOKEN) {
-        const token = req.headers['x-api-token'] || req.query.token;
+        // [安全修复] 只接受请求头传递，杜绝 token 出现在 URL 和访问日志中
+        const token = req.headers['x-api-token'];
         if (token !== REQUIRED_TOKEN) {
             return res.status(401).json({ error: '未授权：缺少或无效的 API Token' });
         }
@@ -332,6 +340,19 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
             ai_comment: ""
         };
 
+        // [正确性修复] 没有唱就不能给分：此前静音输入照样拿到 rhythm/stability 满分和 70+ 总分
+        const validPitchFrames = analysisResult.features.validPitchFrames || 0;
+        const totalFrames = analysisResult.features.totalFrames || 0;
+        const validRatio = totalFrames > 0 ? validPitchFrames / totalFrames : 0;
+        if (validRatio < MIN_VALID_PITCH_RATIO) {
+            console.warn(`[拒绝] ${nickname} 有效音高帧 ${validPitchFrames}/${totalFrames} (${(validRatio * 100).toFixed(1)}%)，判定未检测到人声`);
+            return res.status(422).json({
+                error: '未检测到有效人声，请确认麦克风已开启并对着话筒演唱后重试',
+                validPitchFrames: validPitchFrames,
+                totalFrames: totalFrames
+            });
+        }
+
         if (analysisResult.aligned && analysisResult.scoreResult) {
             const aligned = analysisResult.aligned;
             const scoreResult = analysisResult.scoreResult;
@@ -351,8 +372,7 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
                 articulation: scoreResult.details.pitch,
                 range: Math.min(100, analysisResult.features.range * 3.5),
                 emotion: scoreResult.details.emotion,
-                rank: scoreResult.rank,
-                fittedPitch: scoreResult.fittedPitch
+                rank: scoreResult.rank
             };
 
             responseData.detailed_analysis = diagnosis;
@@ -382,7 +402,6 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
 
             responseData.ai_comment = await callLLM(llmContext, responseData.scores, {
                 key: req.headers['x-api-key'],
-                base: req.headers['x-api-base'],
                 model: req.headers['x-api-model']
             });
         } else {
