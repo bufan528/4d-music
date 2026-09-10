@@ -24,7 +24,13 @@ RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
 COPY . .
 
 # 创建运行时目录
-RUN mkdir -p uploads processed
+RUN mkdir -p uploads processed public
+
+# 复制参考歌曲音频文件到 public/ 目录，供前端播放
+# 根目录的 [vocals].mp3 是分析用的参考文件，public/ 下的是前端播放用的
+RUN cp "一程山路[vocals].mp3" "public/一程山路.mp3" && \
+    cp "如愿[vocals].mp3" "public/如愿.mp3" && \
+    cp "小幸运[vocals].mp3" "public/小幸运.mp3"
 
 # 暴露端口
 EXPOSE 8000
