@@ -2,15 +2,15 @@
   "rewrites": [
     {
       "source": "/analyze",
-      "destination": "http://101.200.13.100:8000/analyze"
+      "destination": "https://REPLACE-WITH-YOUR-BACKEND-HOST/analyze"
     },
     {
       "source": "/leaderboard",
-      "destination": "http://101.200.13.100:8000/leaderboard"
+      "destination": "https://REPLACE-WITH-YOUR-BACKEND-HOST/leaderboard"
     },
     {
-      "source": "/processed/:match*",
-      "destination": "http://101.200.13.100:8000/processed/:match*"
+      "source": "/version",
+      "destination": "https://REPLACE-WITH-YOUR-BACKEND-HOST/version"
     }
   ]
 }

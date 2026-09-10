@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import ReactECharts from 'echarts-for-react';
-import * as echarts from 'echarts';
 import './App.css';
 import {
     Mic, Square, Play, Pause, Settings, RotateCcw,
@@ -350,10 +348,8 @@ const SettingsModal = ({ isOpen, onClose, config, onSave }) => {
                         <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><Key size={14}/> LLM 模型配置</h3>
                         <div className="space-y-3">
                             <div><label className="block text-xs text-slate-500 mb-1">API Key</label><input type="password" value={localConfig.apiKey} onChange={e => setLocalConfig({...localConfig, apiKey: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none" placeholder="sk-..."/></div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div><label className="block text-xs text-slate-500 mb-1">Model ID</label><input type="text" value={localConfig.model} onChange={e => setLocalConfig({...localConfig, model: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none" placeholder="ep-..."/></div>
-                                <div><label className="block text-xs text-slate-500 mb-1">Base URL</label><input type="text" value={localConfig.baseUrl} onChange={e => setLocalConfig({...localConfig, baseUrl: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none" placeholder="https://..."/></div>
-                            </div>
+                            <div><label className="block text-xs text-slate-500 mb-1">Model ID</label><input type="text" value={localConfig.model} onChange={e => setLocalConfig({...localConfig, model: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none" placeholder="ep-..."/></div>
+                            <p className="text-[11px] text-slate-500 leading-relaxed">Base URL 由服务端 <code className="text-slate-400">LLM_BASE_URL</code> 统一配置，不接受客户端指定（防 SSRF）。</p>
                         </div>
                     </div>
                 </div>
@@ -507,11 +503,8 @@ const LeaderboardModal = ({ isOpen, onClose, data, songName, loading }) => {
 };
 
 // --- App 主组件 ---
-const DEFAULT_CONFIG = { backendUrl: '', apiKey: '', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: '' };
+const DEFAULT_CONFIG = { backendUrl: '', apiKey: '', model: '' };
 const CHART_MIN_POINTS = 60;
-const CHART_DEFAULT_PITCH = [65,68,72,70,75,82,85,82,78,80,85,90,88,85,82,80,85,90,92,85,80,85,88,90,92,95,90,88,85,82];
-const CHART_DEFAULT_TEMPO = [95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96,95,96];
-const CHART_DEFAULT_STABILITY = [70,72,70,68,72,75,70,65,60,65,70,75,70,68,70,72,75,70,65,62,65,70,75,72,70,68,70,72,75,70];
 
 function toNumericSeries(series) {
     if (!Array.isArray(series)) return [];
@@ -710,20 +703,22 @@ export default function App() {
         const url = config.backendUrl ? `${config.backendUrl.replace(/\/$/, '')}/analyze` : '/analyze';
         try {
             const headers = {};
-            if (config.apiKey) { headers['x-api-key']=config.apiKey; headers['x-api-base']=config.baseUrl; headers['x-api-model']=config.model; }
+            // 只发送 key / model；baseURL 由服务端环境变量固定，不接受客户端覆盖（防 SSRF）
+            if (config.apiKey) { headers['x-api-key'] = config.apiKey; headers['x-api-model'] = config.model; }
             const res = await axios.post(url, formData, {
                 headers,
                 timeout: 300000, // 5分钟超时（上传+分析）
             });
             const data = res.data;
-            const rawCavity = data.cavity_data || { head: 0.96, chest: 0.11, centroid: 415 };
-            const smoothHead = Math.min(0.96, rawCavity.head);
-            const smoothChest = Math.min(0.96, rawCavity.chest);
+            // [诚实性修复] 去掉伪造兜底：后端没给数据就显示 0，而不是假装有 0.96 头腔共鸣或 80 分
+            const rawCavity = data.cavity_data || { head: 0, chest: 0, centroid: 0 };
+            const smoothHead = Math.min(0.96, rawCavity.head || 0);
+            const smoothChest = Math.min(0.96, rawCavity.chest || 0);
             const totalScore = Math.floor(
-                ((data.scores?.pitch || 80) * 0.4) +
-                ((data.scores?.rhythm || 80) * 0.2) +
-                ((data.scores?.emotion || 80) * 0.2) +
-                ((data.scores?.stability || 80) * 0.2)
+                ((data.scores?.pitch ?? 0) * 0.4) +
+                ((data.scores?.rhythm ?? 0) * 0.2) +
+                ((data.scores?.emotion ?? 0) * 0.2) +
+                ((data.scores?.stability ?? 0) * 0.2)
             );
             setResultData({
                 scores: data.scores,
@@ -797,8 +792,7 @@ export default function App() {
                 const stabilityLength = Array.isArray(rawTimeSeries.stability) ? rawTimeSeries.stability.length : 0;
                 const targetLength = Math.max(CHART_MIN_POINTS, axisLength, pitchLength, tempoLength, stabilityLength);
                 const labels = Array(targetLength).fill('');
-                const pitchData = normalizeSeriesLength(rawTimeSeries.user_pitch, targetLength, CHART_DEFAULT_PITCH);
-                // [Fix] 只渲染有真实数据的维度，避免 tempo/stability 缺失时画预设假数据
+                // 不再向 normalizeSeriesLength 传预设假数据：某一维度没有真实数据时就不渲染它
                 const hasPitch = toNumericSeries(rawTimeSeries.user_pitch).some(v => v !== null);
                 const hasTempo = toNumericSeries(rawTimeSeries.tempo).some(v => v !== null);
                 const hasStability = toNumericSeries(rawTimeSeries.stability).some(v => v !== null);
@@ -807,7 +801,7 @@ export default function App() {
                 if (hasPitch) {
                     chartDatasets.push({
                         label: '音准',
-                        data: pitchData,
+                        data: normalizeSeriesLength(rawTimeSeries.user_pitch, targetLength),
                         borderColor: '#a78bfa',
                         borderWidth: 3,
                         tension: 0.4,
@@ -816,10 +810,9 @@ export default function App() {
                     });
                 }
                 if (hasTempo) {
-                    const tempoData = normalizeSeriesLength(rawTimeSeries.tempo, targetLength, CHART_DEFAULT_TEMPO);
                     chartDatasets.push({
                         label: '节奏',
-                        data: tempoData,
+                        data: normalizeSeriesLength(rawTimeSeries.tempo, targetLength),
                         borderColor: '#f0883e',
                         borderWidth: 2,
                         tension: 0.4,
@@ -828,10 +821,9 @@ export default function App() {
                     });
                 }
                 if (hasStability) {
-                    const stabilityData = normalizeSeriesLength(rawTimeSeries.stability, targetLength, CHART_DEFAULT_STABILITY);
                     chartDatasets.push({
                         label: '稳定',
-                        data: stabilityData,
+                        data: normalizeSeriesLength(rawTimeSeries.stability, targetLength),
                         borderColor: '#2ea043',
                         borderWidth: 2,
                         tension: 0.4,
@@ -977,8 +969,8 @@ export default function App() {
                     <header className="header-board">
                         <div style={{fontSize: '24px', fontWeight: 900, letterSpacing: '1px'}}>4D <span style={{color:'var(--primary)'}}>MUSIC AI</span> PRO</div>
                         <div style={{display: 'flex', gap: '40px', alignItems: 'center'}}>
-                            <div style={{textAlign: 'right'}}><span style={{fontSize: '12px', opacity: 0.6}}>音阶中心</span><div style={{fontWeight: 'bold', color: 'var(--primary)'}}>{resultData.cavity?.centroid ? Math.round(resultData.cavity.centroid) + 'Hz' : '415Hz'}</div></div>
-                            <div style={{textAlign: 'right'}}><span style={{fontSize: '12px', opacity: 0.6}}>综合评分</span><div style={{fontSize: '28px', fontWeight: 800, color: 'var(--accent)'}}>{resultData.totalScore || 88.5}</div></div>
+                            <div style={{textAlign: 'right'}}><span style={{fontSize: '12px', opacity: 0.6}}>音阶中心</span><div style={{fontWeight: 'bold', color: 'var(--primary)'}}>{resultData.cavity?.centroid ? Math.round(resultData.cavity.centroid) + 'Hz' : '--'}</div></div>
+                            <div style={{textAlign: 'right'}}><span style={{fontSize: '12px', opacity: 0.6}}>综合评分</span><div style={{fontSize: '28px', fontWeight: 800, color: 'var(--accent)'}}>{Number.isFinite(resultData.totalScore) ? resultData.totalScore : '--'}</div></div>
                         </div>
                     </header>
 
@@ -987,11 +979,11 @@ export default function App() {
                             <div style={{textAlign: 'center', color: 'var(--primary)', fontSize: '12px', marginBottom: '15px'}}>声带发力状态</div>
                             <div style={{display: 'flex', justifyContent: 'space-around'}}>
                                 <div>
-                                    <div className="tube-v"><div className="fill-v" style={{height: `${(resultData.cavity?.head || 0.85) * 100}%`, background: 'cyan', boxShadow: '0 0 15px cyan'}}></div></div>
+                                    <div className="tube-v"><div className="fill-v" style={{height: `${(resultData.cavity?.head ?? 0) * 100}%`, background: 'cyan', boxShadow: '0 0 15px cyan'}}></div></div>
                                     <p style={{fontSize: '12px', textAlign: 'center'}}>头腔</p>
                                 </div>
                                 <div>
-                                    <div className="tube-v"><div className="fill-v" style={{height: `${(resultData.cavity?.chest || 0.15) * 100}%`, background: 'var(--accent)', boxShadow: '0 0 15px var(--accent)'}}></div></div>
+                                    <div className="tube-v"><div className="fill-v" style={{height: `${(resultData.cavity?.chest ?? 0) * 100}%`, background: 'var(--accent)', boxShadow: '0 0 15px var(--accent)'}}></div></div>
                                     <p style={{fontSize: '12px', textAlign: 'center'}}>胸腔</p>
                                 </div>
                             </div>
@@ -1000,10 +992,10 @@ export default function App() {
                         <div className="monitor-unit">
                             <div style={{fontSize: '12px', color: 'var(--success)', marginBottom: '10px'}}>呼吸支撑密度</div>
                             <div style={{height: '8px', background: '#000', borderRadius: '4px', overflow: 'hidden'}}>
-                                <div style={{width: `${resultData.scores?.stability || 70}%`, height: '100%', background: 'var(--success)', boxShadow: '0 0 10px var(--success)'}}></div>
+                                <div style={{width: `${resultData.scores?.stability ?? 0}%`, height: '100%', background: 'var(--success)', boxShadow: '0 0 10px var(--success)'}}></div>
                             </div>
                             <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '10px', marginTop: '5px', opacity: 0.6}}>
-                                <span>低压</span><span>高支撑 ({resultData.scores?.stability || 70}%)</span>
+                                <span>低压</span><span>高支撑 ({resultData.scores?.stability ?? 0}%)</span>
                             </div>
                         </div>
 
@@ -1024,12 +1016,12 @@ export default function App() {
                         </section>
 
                         <section className="stats-grid">
-                            <div className="stat-card" style={{'--c': 'var(--purple)'}}><span style={{fontSize: '12px', opacity: 0.7}}>音准精准度</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.pitch || 84}%</strong></div></div>
-                            <div className="stat-card" style={{'--c': 'var(--accent)'}}><span style={{fontSize: '12px', opacity: 0.7}}>节奏同步率</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.rhythm || 96}%</strong></div></div>
-                            <div className="stat-card" style={{'--c': 'var(--primary)'}}><span style={{fontSize: '12px', opacity: 0.7}}>共鸣丰满度</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.tone || 75}%</strong></div></div>
-                            <div className="stat-card" style={{'--c': 'var(--success)'}}><span style={{fontSize: '12px', opacity: 0.7}}>气息稳定性</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.stability || 70}%</strong></div></div>
-                            <div className="stat-card" style={{'--c': '#7c3aed'}}><span style={{fontSize: '12px', opacity: 0.7}}>情感表现力</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.emotion || 66}%</strong></div></div>
-                            <div className="stat-card" style={{'--c': '#ffd43b'}}><span style={{fontSize: '12px', opacity: 0.7}}>瞬态爆发力</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.tension || 50}%</strong></div></div>
+                            <div className="stat-card" style={{'--c': 'var(--purple)'}}><span style={{fontSize: '12px', opacity: 0.7}}>音准精准度</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.pitch ?? 0}%</strong></div></div>
+                            <div className="stat-card" style={{'--c': 'var(--accent)'}}><span style={{fontSize: '12px', opacity: 0.7}}>节奏同步率</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.rhythm ?? 0}%</strong></div></div>
+                            <div className="stat-card" style={{'--c': 'var(--primary)'}}><span style={{fontSize: '12px', opacity: 0.7}}>共鸣丰满度</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.tone ?? 0}%</strong></div></div>
+                            <div className="stat-card" style={{'--c': 'var(--success)'}}><span style={{fontSize: '12px', opacity: 0.7}}>气息稳定性</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.stability ?? 0}%</strong></div></div>
+                            <div className="stat-card" style={{'--c': '#7c3aed'}}><span style={{fontSize: '12px', opacity: 0.7}}>情感表现力</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.emotion ?? 0}%</strong></div></div>
+                            <div className="stat-card" style={{'--c': '#ffd43b'}}><span style={{fontSize: '12px', opacity: 0.7}}>瞬态爆发力</span><div><strong style={{fontSize: '24px'}}>{resultData.scores?.tension ?? 0}%</strong></div></div>
                         </section>
                     </main>
 
