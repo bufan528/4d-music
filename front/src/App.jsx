@@ -320,9 +320,9 @@ const SettingsModal = ({ isOpen, onClose, config, onSave }) => {
     const testConnection = async () => {
         setTestStatus('loading');
         setTestMsg("正在连接后端...");
-        const url = localConfig.backendUrl ? `${localConfig.backendUrl.replace(/\/$/, '')}/version` : '/version';
+        const url = localConfig.backendUrl ? `${localConfig.backendUrl.replace(/\/$/, '')}/analyze` : '/analyze';
         try {
-            await axios.get(url, { timeout: 5000 });
+            await axios.post(url, {}, { timeout: 3000 });
             setTestStatus('success'); setTestMsg("连接成功！后端服务在线。");
         } catch (e) {
             if (e.response) { setTestStatus('success'); setTestMsg(`连接成功！(服务响应: ${e.response.status})`); }
@@ -711,7 +711,10 @@ export default function App() {
         try {
             const headers = {};
             if (config.apiKey) { headers['x-api-key']=config.apiKey; headers['x-api-base']=config.baseUrl; headers['x-api-model']=config.model; }
-            const res = await axios.post(url, formData, { headers });
+            const res = await axios.post(url, formData, {
+                headers,
+                timeout: 300000, // 5分钟超时（上传+分析）
+            });
             const data = res.data;
             const rawCavity = data.cavity_data || { head: 0.96, chest: 0.11, centroid: 415 };
             const smoothHead = Math.min(0.96, rawCavity.head);
@@ -734,8 +737,12 @@ export default function App() {
         } catch (e) {
             console.error(e);
             let msg = e.message;
-            if (e.response) {
-                if (e.response.status === 502) msg = "后端服务未响应 (502)，可能正在重启，请稍后重试。";
+            if (e.code === 'ECONNABORTED') {
+                msg = "请求超时（上传或分析超过5分钟），请缩短录音时间或检查网络后重试。";
+            } else if (e.response) {
+                if (e.response.status === 408) msg = "上传超时（408），网络较慢，请缩短录音时间或检查网络后重试。";
+                else if (e.response.status === 502) msg = "后端服务未响应 (502)，可能正在重启，请稍后重试。";
+                else if (e.response.status === 503) msg = "服务器繁忙 (503)，同时分析的人太多，请稍后重试。";
                 else if (e.response.status === 504) msg = "分析超时 (504)，请缩短录音时间。";
                 else if (e.response.data?.error) msg = e.response.data.error;
             }
