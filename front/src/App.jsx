@@ -503,7 +503,7 @@ const LeaderboardModal = ({ isOpen, onClose, data, songName, loading }) => {
 };
 
 // --- App 主组件 ---
-const DEFAULT_CONFIG = { backendUrl: '', apiKey: '', model: '' };
+const DEFAULT_CONFIG = { backendUrl: 'https://api.bufan410425.top', apiKey: '', model: '' };
 const CHART_MIN_POINTS = 60;
 
 function toNumericSeries(series) {
@@ -595,7 +595,17 @@ export default function App() {
 
     useEffect(() => {
         const savedConfig = localStorage.getItem('vocal_app_config');
-        if (savedConfig) setConfig(JSON.parse(savedConfig));
+        if (savedConfig) {
+            try {
+                const parsed = JSON.parse(savedConfig);
+                // 合并默认值：用户未配置或清空 backendUrl 时，自动使用默认后端地址
+                setConfig({
+                    backendUrl: parsed.backendUrl || DEFAULT_CONFIG.backendUrl,
+                    apiKey: parsed.apiKey || '',
+                    model: parsed.model || ''
+                });
+            } catch (e) { }
+        }
         const savedName = localStorage.getItem('vocal_nickname');
         if (savedName) setNickname(savedName); else setShowNicknameModal(true);
         return () => { audioMusicRef.current?.pause(); };
@@ -609,12 +619,15 @@ export default function App() {
         const baseUrl = config.backendUrl ? config.backendUrl.replace(/\/$/, '') : '';
         const songUrl = currentSong.file.startsWith('http') ? currentSong.file : `${baseUrl}${currentSong.file}`;
         audioMusicRef.current = new Audio(songUrl);
+        audioMusicRef.current.setAttribute('playsinline', ''); // iOS Safari 内联播放，避免全屏
+        audioMusicRef.current.setAttribute('webkit-playsinline', '');
         audioMusicRef.current.onended = () => {
             setIsMusicPlaying(false);
             audioMusicRef.current.currentTime = 0; // 播放结束后重置到开头，允许重复播放
         };
         audioMusicRef.current.onerror = (e) => {
-            console.error("Audio Load Error:", e);
+            console.error("Audio Load Error:", e, "URL:", songUrl);
+            setErrorMsg("音频加载失败，请检查网络或稍后重试");
         };
         handleReset();
     }, [currentSong, config.backendUrl]);
