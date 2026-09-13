@@ -4,6 +4,7 @@
   "description": "四维声乐后端 - LLM集成版",
   "main": "server.js",
   "scripts": {
+    "prestart": "node -e \"const fs=require('fs');const path=require('path');fs.mkdirSync('public',{recursive:true});[['一程山路[vocals].mp3','一程山路.mp3'],['如愿[vocals].mp3','如愿.mp3'],['小幸运[vocals].mp3','小幸运.mp3']].forEach(([s,d])=>{try{if(fs.existsSync(s))fs.copyFileSync(s,path.join('public',d));}catch(e){}})\"",
     "start": "node server.js"
   },
   "dependencies": {

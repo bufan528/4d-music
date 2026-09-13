@@ -11,6 +11,8 @@ front/node_modules/
 uploads/
 processed/
 leaderboard.json
+# prestart 从根目录参考音频复制而来（与 Docker 构建行为一致），不提交
+public/*.mp3
 
 # 构建产物
 dist/
