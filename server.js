@@ -70,7 +70,10 @@ const updateLeaderboard = (songId, nickname, totalScore, detailedScores) => {
     if (data[songId].length > 50) data[songId] = data[songId].slice(0, 50);
 
     try {
-        fs.writeFileSync(LEADERBOARD_FILE, JSON.stringify(data, null, 2), 'utf8');
+        // [可靠性] 先写临时文件再原子重命名，避免崩溃时排行榜 JSON 写一半损坏
+        const tmpFile = LEADERBOARD_FILE + '.tmp';
+        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tmpFile, LEADERBOARD_FILE);
     } catch (e) {
         console.error("写入排行榜失败:", e.message);
     }
@@ -161,12 +164,16 @@ const callLLM = async (ctx, scores) => {
     输出要求: 3个建议板块(标题+内容+动作指令"听听...")。`;
 
     try {
-        const completion = await client.chat.completions.create({
+        // [延迟优化] LLM 最多等15秒，超时直接降级，避免拖住整个 /analyze 响应
+        const llmPromise = client.chat.completions.create({
             messages: [{ role: "system", content: systemPrompt }, { role: "user", content: "请给建议" }],
             model: DEFAULT_MODEL,
             temperature: 0.7,
             max_tokens: 400
         });
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('LLM timeout')), 15000));
+        const completion = await Promise.race([llmPromise, timeoutPromise]);
         return completion.choices[0].message.content;
     } catch (e) {
         console.error("AI Error:", e.message);
@@ -232,9 +239,19 @@ app.use(express.json());
 // ==========================================
 // 上传配置
 // ==========================================
+const ALLOWED_AUDIO_EXT = new Set(['.webm', '.wav', '.mp3', '.m4a', '.ogg', '.opus', '.flac']);
 const upload = multer({
     dest: 'uploads/',
-    limits: { fileSize: MAX_UPLOAD_SIZE }
+    limits: { fileSize: MAX_UPLOAD_SIZE },
+    // [性能优化] 非音频文件在入口直接拒绝，省掉一次 ffmpeg 转码 + YIN 全量计算
+    fileFilter: (req, file, cb) => {
+        const name = String(file.originalname || '').toLowerCase();
+        const okExt = [...ALLOWED_AUDIO_EXT].some(ext => name.endsWith(ext));
+        const okMime = !file.mimetype || file.mimetype.startsWith('audio/') ||
+            file.mimetype === 'video/webm' || file.mimetype === 'application/octet-stream';
+        if (okExt || okMime) cb(null, true);
+        else cb(new Error('仅支持音频文件（webm/wav/mp3/m4a/ogg/flac）'));
+    }
 });
 ['uploads', 'processed', 'public'].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
