@@ -355,7 +355,9 @@ app.post('/analyze', analyzeRateLimit, upload.single('file'), async (req, res) =
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const targetFilename = `${nickname}_${songId}_${timestamp}.wav`;
+    // [回归修复] 秒级时间戳 + 随机后缀：同昵称同歌曲同1秒内连传两次不会撞到同一个 wav
+    const randSuffix = Math.random().toString(36).slice(2, 7);
+    const targetFilename = `${nickname}_${songId}_${timestamp}_${randSuffix}.wav`;
     const inputPath = req.file.path;
     const outputPath = path.join(__dirname, 'processed', targetFilename);
     const refData = referenceLibrary.get(songId);
@@ -365,7 +367,8 @@ app.post('/analyze', analyzeRateLimit, upload.single('file'), async (req, res) =
     }
 
     try {
-        console.log(`[处理] 用户: ${nickname}, 歌曲: ${songId}, 队列: ${analysisQueue.length}, 活跃: ${activeAnalysisCount}`);
+        // [安全] 昵称是用户输入：去换行防日志注入
+        console.log(`[处理] 用户: ${nickname.replace(/[\r\n]/g, '')}, 歌曲: ${songId}, 队列: ${analysisQueue.length}, 活跃: ${activeAnalysisCount}`);
 
         const analysisResult = await enqueueAnalysis({
             inputPath,
@@ -475,6 +478,8 @@ app.post('/analyze', analyzeRateLimit, upload.single('file'), async (req, res) =
         res.status(isBusy ? 503 : 500).json({ error: e.message });
     } finally {
         try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch (e) { }
+        // [回归修复] worker 超时被 terminate 时 processed 下的 wav 没人删，这里兜底
+        try { if (typeof outputPath !== 'undefined' && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
     }
 });
 

@@ -707,10 +707,11 @@ function generateDiagnosticReport(userPitch, refPitch, axis) {
     let totalDiff = 0, count = 0;
     let maxDiff = 0, maxDiffIndex = 0;
 
+    // [公平性修复] 原来用 Hz 绝对偏差 + 固定 5/15Hz 阈值：同样的 10Hz 在 110Hz 处偏了约156音分、
+    // 在 880Hz 处只偏约20音分，低声部永远吃亏。改用音分（cents）统计，与打分口径一致。
     for (let i = 0; i < refPitch.length; i++) {
-        if (refPitch[i] !== null && userPitch[i] !== null) {
-            const diff = userPitch[i] - refPitch[i];
-            const absDiff = Math.abs(diff);
+        if (refPitch[i] !== null && refPitch[i] > 0 && userPitch[i] !== null && userPitch[i] > 0) {
+            const absDiff = Math.abs(1200 * Math.log2(userPitch[i] / refPitch[i]));
             totalDiff += absDiff;
             count++;
 
@@ -725,10 +726,10 @@ function generateDiagnosticReport(userPitch, refPitch, axis) {
     const maxDiffTime = axis[maxDiffIndex] || "0.00";
     const details = [];
 
-    details.push(`平均频率偏差 ${avgDiff}Hz。`);
+    details.push(`平均音高偏差 ${avgDiff}音分。`);
 
-    if (avgDiff < 5) details.push("音准控制极佳，贴合度高。");
-    else if (avgDiff < 15) details.push("整体音准良好，偶有偏差。");
+    if (avgDiff < 30) details.push("音准控制极佳，贴合度高。");
+    else if (avgDiff < 100) details.push("整体音准良好，偶有偏差。");
     else details.push("音准波动较大，建议加强音阶练习。");
 
     return {
