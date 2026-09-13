@@ -133,7 +133,7 @@ CORS_ORIGINS=https://your-frontend.example.com
 
 ### 前端部署（Vercel）
 
-`front/vercel.json` 里的 `destination` 目前是占位符 `https://REPLACE-WITH-YOUR-BACKEND-HOST`，**部署前必须替换成你自己的后端地址**（Vercel 的 `rewrites` 不支持环境变量插值，只能写死）。
+前端通过设置面板/环境变量中的后端地址直连后端，无需 `vercel.json` 重写（该文件已删除）。
 
 同时注意后端要设置 `CORS_ORIGINS`，把 Vercel 域名加进白名单。
 
