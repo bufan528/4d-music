@@ -18,10 +18,14 @@ const NICKNAME_REGEX = /^[\u4e00-\u9fa5a-zA-Z0-9_\-]{1,20}$/;
 const REQUIRED_TOKEN = process.env.API_TOKEN || '';
 
 // CORS 允许来源：生产环境通过环境变量配置前端域名，多个用逗号分隔
-// [安全优化] 生产环境默认拒绝跨域（不再默认允许所有），开发环境才放行
+// [回归说明] 未设置时保持放行（与历史行为一致，避免打断现网前端）；
+// 生产环境会在启动日志里刷警告，仍强烈建议设置 CORS_ORIGINS
 const ALLOWED_ORIGINS = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : (process.env.NODE_ENV === 'production' ? [] : true);
+    : true;
+if (process.env.NODE_ENV === 'production' && ALLOWED_ORIGINS === true) {
+    console.warn('[安全警告] 生产环境未设置 CORS_ORIGINS，当前允许所有来源跨域调用');
+}
 
 // ==========================================
 // 性能优化配置（针对 1G 内存服务器）
@@ -172,6 +176,8 @@ const callLLM = async (ctx, scores) => {
             temperature: 0.7,
             max_tokens: 400
         });
+        // [回归修复] 竞速失败后后台请求仍在跑：挂载空 catch，避免 unhandledRejection 崩进程
+        llmPromise.catch(() => {});
         const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('LLM timeout')), 15000));
         const completion = await Promise.race([llmPromise, timeoutPromise]);
@@ -470,6 +476,15 @@ app.post('/analyze', analyzeRateLimit, upload.single('file'), async (req, res) =
     } finally {
         try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch (e) { }
     }
+});
+
+// [回归修复] 文件过滤/超限等错误统一吐 JSON（否则 Express 默认回 HTML，前端解析失败）
+app.use((err, req, res, next) => {
+    if (!err) return next();
+    const msg = err.message || '上传失败';
+    if (msg.includes('仅支持音频文件')) return res.status(400).json({ error: msg });
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: '文件超过20MB限制' });
+    return res.status(500).json({ error: msg });
 });
 
 // 静态文件：只暴露 public 目录，不暴露源代码

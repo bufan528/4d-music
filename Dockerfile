@@ -32,10 +32,10 @@ RUN cp "一程山路[vocals].mp3" "public/一程山路.mp3" && \
     cp "如愿[vocals].mp3" "public/如愿.mp3" && \
     cp "小幸运[vocals].mp3" "public/小幸运.mp3"
 
-# 生产默认值 + 非 root 运行 + 健康检查
+# 生产默认值 + 健康检查
+# [回归说明] 曾切到 USER node，但宿主机挂载的 uploads/processed/leaderboard.json
+# 多为 root 权，node 写不进会导致上传失败；单用户小服务器上 root 运行可接受，故回退
 ENV NODE_ENV=production
-RUN chown -R node:node /app
-USER node
 
 # 暴露端口
 EXPOSE 8000

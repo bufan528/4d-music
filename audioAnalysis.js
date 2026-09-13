@@ -290,8 +290,9 @@ const analyzeAudio = async (filePath) => {
         }
         prevSpectrum = spec.slice(0, half);
 
+        // [口径锁定] 共鸣质心必须用全频谱（与优化前一致），只把通量对比限制在半谱
         let num=0, den=0;
-        for(let k=0; k<half; k++){ num += k*spec[k]; den += spec[k]; }
+        for(let k=0; k<spec.length; k++){ num += k*spec[k]; den += spec[k]; }
         const cent = den > 0.0001 ? num/den : 0;
         centroidSum += cent;
         centroidCount++;
