@@ -806,16 +806,17 @@ export default function App() {
             const timeCtx = document.getElementById('timeSeriesChart');
             if (timeCtx) {
                 const rawTimeSeries = resultData.time_series || {};
+                // 后端契约：{axis, user_pitch, dynamics, standard_pitch}，旧 tempo/stability 字段不存在
                 const axisLength = Array.isArray(rawTimeSeries.axis) ? rawTimeSeries.axis.length : 0;
                 const pitchLength = Array.isArray(rawTimeSeries.user_pitch) ? rawTimeSeries.user_pitch.length : 0;
-                const tempoLength = Array.isArray(rawTimeSeries.tempo) ? rawTimeSeries.tempo.length : 0;
-                const stabilityLength = Array.isArray(rawTimeSeries.stability) ? rawTimeSeries.stability.length : 0;
-                const targetLength = Math.max(CHART_MIN_POINTS, axisLength, pitchLength, tempoLength, stabilityLength);
+                const stdLength = Array.isArray(rawTimeSeries.standard_pitch) ? rawTimeSeries.standard_pitch.length : 0;
+                const dynLength = Array.isArray(rawTimeSeries.dynamics) ? rawTimeSeries.dynamics.length : 0;
+                const targetLength = Math.max(CHART_MIN_POINTS, axisLength, pitchLength, stdLength, dynLength);
                 const labels = Array(targetLength).fill('');
                 // 不再向 normalizeSeriesLength 传预设假数据：某一维度没有真实数据时就不渲染它
                 const hasPitch = toNumericSeries(rawTimeSeries.user_pitch).some(v => v !== null);
-                const hasTempo = toNumericSeries(rawTimeSeries.tempo).some(v => v !== null);
-                const hasStability = toNumericSeries(rawTimeSeries.stability).some(v => v !== null);
+                const hasStandard = toNumericSeries(rawTimeSeries.standard_pitch).some(v => v !== null);
+                const hasDynamics = toNumericSeries(rawTimeSeries.dynamics).some(v => v !== null);
 
                 const chartDatasets = [];
                 if (hasPitch) {
@@ -829,21 +830,22 @@ export default function App() {
                         fill: false
                     });
                 }
-                if (hasTempo) {
+                if (hasStandard) {
                     chartDatasets.push({
-                        label: '节奏',
-                        data: normalizeSeriesLength(rawTimeSeries.tempo, targetLength),
+                        label: '标准',
+                        data: normalizeSeriesLength(rawTimeSeries.standard_pitch, targetLength),
                         borderColor: '#f0883e',
                         borderWidth: 2,
+                        borderDash: [6, 4],
                         tension: 0.4,
                         pointRadius: 0,
                         fill: false
                     });
                 }
-                if (hasStability) {
+                if (hasDynamics) {
                     chartDatasets.push({
-                        label: '稳定',
-                        data: normalizeSeriesLength(rawTimeSeries.stability, targetLength),
+                        label: '动态',
+                        data: normalizeSeriesLength(rawTimeSeries.dynamics, targetLength),
                         borderColor: '#2ea043',
                         borderWidth: 2,
                         tension: 0.4,

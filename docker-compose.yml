@@ -23,6 +23,8 @@ services:
       # 持久化处理后的音频文件（可选，调试用）
       - ./processed:/app/processed
       - ./uploads:/app/uploads
+      # 持久化排行榜数据，避免重建容器丢失
+      - ./leaderboard.json:/app/leaderboard.json
     # 内存限制（DTW 带状改造后，1G 内存足够）
     deploy:
       resources:
