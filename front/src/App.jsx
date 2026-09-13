@@ -499,7 +499,8 @@ const LeaderboardModal = ({ isOpen, onClose, data, songName, loading }) => {
 };
 
 // --- App 主组件 ---
-const DEFAULT_CONFIG = { backendUrl: 'https://api.bufan410425.top', apiKey: '', model: '' };
+// LLM 已收归服务端统一配置，客户端不再存 key/model，只保留后端地址
+const DEFAULT_CONFIG = { backendUrl: 'https://api.bufan410425.top' };
 const CHART_MIN_POINTS = 60;
 
 function toNumericSeries(series) {
@@ -597,11 +598,9 @@ export default function App() {
                 const parsed = JSON.parse(savedConfig);
                 // 合并默认值：用户未配置或清空 backendUrl 时，自动使用默认后端地址
                 setConfig({
-                    backendUrl: parsed.backendUrl || DEFAULT_CONFIG.backendUrl,
-                    apiKey: parsed.apiKey || '',
-                    model: parsed.model || ''
+                    backendUrl: parsed.backendUrl || DEFAULT_CONFIG.backendUrl
                 });
-            } catch (e) { }
+            } catch { /* 本地缓存损坏时用默认配置 */ }
         }
         const savedName = localStorage.getItem('vocal_nickname');
         if (savedName) setNickname(savedName); else setShowNicknameModal(true);
@@ -633,6 +632,7 @@ export default function App() {
     const handleSaveNickname = (name) => { setNickname(name); localStorage.setItem('vocal_nickname', name); setShowNicknameModal(false); };
     
     const handleReset = () => {
+        if (userAudioUrl) { URL.revokeObjectURL(userAudioUrl); setUserAudioUrl(null); }
         setIsMusicPlaying(false);
         if(audioMusicRef.current) {
             audioMusicRef.current.pause();
@@ -646,6 +646,7 @@ export default function App() {
 
     const handleReAnalyze = () => {
         if (!lastBlob) return;
+        setErrorMsg("");
         setStatusText("正在重新分析...");
         setIsAnalyzing(true);
         uploadAndAnalyze(lastBlob);
