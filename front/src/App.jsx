@@ -345,12 +345,8 @@ const SettingsModal = ({ isOpen, onClose, config, onSave }) => {
                         {testStatus && <div className={`mt-2 text-xs flex items-center gap-2 ${testStatus === 'success' ? 'text-green-400' : 'text-red-400'}`}>{testStatus === 'success' ? <Wifi size={14}/> : <WifiOff size={14}/>}{testMsg}</div>}
                     </div>
                     <div className="border-t border-slate-700 pt-4">
-                        <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><Key size={14}/> LLM 模型配置</h3>
-                        <div className="space-y-3">
-                            <div><label className="block text-xs text-slate-500 mb-1">API Key</label><input type="password" value={localConfig.apiKey} onChange={e => setLocalConfig({...localConfig, apiKey: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none" placeholder="sk-..."/></div>
-                            <div><label className="block text-xs text-slate-500 mb-1">Model ID</label><input type="text" value={localConfig.model} onChange={e => setLocalConfig({...localConfig, model: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none" placeholder="ep-..."/></div>
-                            <p className="text-[11px] text-slate-500 leading-relaxed">Base URL 由服务端 <code className="text-slate-400">LLM_BASE_URL</code> 统一配置，不接受客户端指定（防 SSRF）。</p>
-                        </div>
+                        <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><Key size={14}/> AI 点评</h3>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">由服务端 <code className="text-slate-400">LLM_BASE_URL / LLM_API_KEY</code> 统一配置，未配置时显示“未连接”，不影响打分。</p>
                     </div>
                 </div>
                 <div className="mt-8 flex justify-end"><button onClick={() => onSave(localConfig)} className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-bold transition shadow-lg">保存并应用</button></div>
@@ -566,6 +562,7 @@ export default function App() {
     const [showNicknameModal, setShowNicknameModal] = useState(false);
     const { isRecording, startRecording, stopRecording, resetRecorder } = useRecorder();
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
     const [hasResult, setHasResult] = useState(false);
     const [statusText, setStatusText] = useState("点击开始录制");
     const [errorMsg, setErrorMsg] = useState("");
@@ -617,7 +614,7 @@ export default function App() {
             setIsMusicPlaying(false);
         }
         const baseUrl = config.backendUrl ? config.backendUrl.replace(/\/$/, '') : '';
-        const songUrl = currentSong.file.startsWith('http') ? currentSong.file : `${baseUrl}${currentSong.file}`;
+        const songUrl = currentSong.file.startsWith('http') ? currentSong.file : `${baseUrl}${encodeURI(currentSong.file)}`;
         audioMusicRef.current = new Audio(songUrl);
         audioMusicRef.current.setAttribute('playsinline', ''); // iOS Safari 内联播放，避免全屏
         audioMusicRef.current.setAttribute('webkit-playsinline', '');
@@ -722,13 +719,15 @@ export default function App() {
         formData.append('songId', currentSong.id);
         const url = config.backendUrl ? `${config.backendUrl.replace(/\/$/, '')}/analyze` : '/analyze';
         try {
-            const headers = {};
-            // 只发送 key / model；baseURL 由服务端环境变量固定，不接受客户端覆盖（防 SSRF）
-            if (config.apiKey) { headers['x-api-key'] = config.apiKey; headers['x-api-model'] = config.model; }
+            // LLM 由服务端统一配置（防 SSRF），不再发送客户端 key/model 头
+            setUploadProgress(0);
             const res = await axios.post(url, formData, {
-                headers,
                 timeout: 300000, // 5分钟超时（上传+分析）
+                onUploadProgress: (e) => {
+                    if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+                },
             });
+            setUploadProgress(100);
             const data = res.data;
             // [诚实性修复] 去掉伪造兜底：后端没给数据就显示 0，而不是假装有 0.96 头腔共鸣或 80 分
             const rawCavity = data.cavity_data || { head: 0, chest: 0, centroid: 0 };
@@ -811,7 +810,7 @@ export default function App() {
                 const pitchLength = Array.isArray(rawTimeSeries.user_pitch) ? rawTimeSeries.user_pitch.length : 0;
                 const stdLength = Array.isArray(rawTimeSeries.standard_pitch) ? rawTimeSeries.standard_pitch.length : 0;
                 const dynLength = Array.isArray(rawTimeSeries.dynamics) ? rawTimeSeries.dynamics.length : 0;
-                const targetLength = Math.max(CHART_MIN_POINTS, axisLength, pitchLength, stdLength, dynLength);
+                const targetLength = Math.min(600, Math.max(CHART_MIN_POINTS, axisLength, pitchLength, stdLength, dynLength));
                 const labels = Array(targetLength).fill('');
                 // 不再向 normalizeSeriesLength 传预设假数据：某一维度没有真实数据时就不渲染它
                 const hasPitch = toNumericSeries(rawTimeSeries.user_pitch).some(v => v !== null);
@@ -886,7 +885,7 @@ export default function App() {
                         <div className="absolute inset-0 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
                     </div>
                     <h2 className="text-lg font-bold mt-6 text-white animate-pulse">正在进行九维声学分析...</h2>
-                    <p className="text-slate-500 text-xs mt-2">Generating Report & AI Feedback</p>
+                    <p className="text-slate-500 text-xs mt-2">Generating Report & AI Feedback{uploadProgress > 0 && uploadProgress < 100 ? ` · 上传 ${uploadProgress}%` : ''}</p>
                 </div>
             )}
 

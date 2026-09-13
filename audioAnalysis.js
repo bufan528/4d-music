@@ -233,6 +233,13 @@ const analyzeAudio = async (filePath) => {
     const hop = Math.floor(sr / 50);
     const bSize = 2048;
     const fft = new DSP.FFT(bSize, sr);
+    // [性能优化] 复用加窗缓冲，避免每帧 new Float32Array + Array.from 拷贝
+    const winBuf = new Float32Array(bSize);
+    // [正确性] 超长音频直接拒绝，避免 DTW 带状矩阵 OOM（4分钟约165MB）
+    const MAX_ANALYSIS_SECONDS = 240;
+    if (data.length / sr > MAX_ANALYSIS_SECONDS) {
+        throw new Error('音频过长（超过4分钟），请截取片段后重试');
+    }
 
     const timeAxis=[], rawPitch=[], dyn=[], eng=[], centroids=[];
     // [内存优化] 频谱通量改为流式计算：只保留上一帧频谱，不再累积全部帧。
@@ -245,46 +252,53 @@ const analyzeAudio = async (filePath) => {
     let energyCount = 0;
     for(let i=0; i<data.length; i+=hop * 10) {
         if (i + bSize > data.length) break;
-        let chunk = data.slice(i, i+bSize);
-        let sum=0; for(let k=0; k<chunk.length; k++) sum += chunk[k]*chunk[k];
-        totalEnergy += Math.sqrt(sum/chunk.length);
+        let sum=0; for(let k=i; k<i+bSize; k++) sum += data[k]*data[k];
+        totalEnergy += Math.sqrt(sum/bSize);
         energyCount++;
     }
     const avgEnergy = energyCount > 0 ? totalEnergy / energyCount : 0.05;
     const noiseThreshold = Math.max(0.008, avgEnergy * 0.15);
 
+    // [性能优化] 热循环零拷贝：RMS 直读 data 下标；Hanning 原地写入复用缓冲；
+    // FFT 直接吃 Float32Array；频谱只保留前半段快照用于通量对比
+    let centroidSum = 0;
+    let centroidCount = 0;
     for(let i=0; i<data.length; i+=hop) {
         if (i + bSize > data.length) break;
-        let chunk = data.slice(i, i+bSize);
-        const p = detect(chunk);
+        let sum=0; for(let k=i; k<i+bSize; k++) sum += data[k]*data[k];
+        const rms = Math.sqrt(sum/bSize);
 
-        let sum=0; for(let k=0; k<chunk.length; k++) sum += chunk[k]*chunk[k];
-        const rms = Math.sqrt(sum/chunk.length);
+        // 原地 Hanning 加窗（与 applyHanningWindow 等价，复用 winBuf）
+        for(let k=0; k<bSize; k++) {
+            winBuf[k] = data[i+k] * (0.5 * (1 - Math.cos((2 * Math.PI * k) / (bSize - 1))));
+        }
+        // YIN 需要原始块：传 subarray 视图（只读），避免 slice 拷贝
+        const p = detect(data.subarray(i, i+bSize));
 
-        const windowedChunk = applyHanningWindow(chunk);
-        fft.forward(Array.from(windowedChunk));
-        const spec = Float64Array.from(fft.spectrum);
+        fft.forward(winBuf);
+        const spec = fft.spectrum;
+        const half = Math.floor(spec.length * 0.5);
         // [内存优化] 流式累加频谱通量：只与上一帧比较，不再累积全部频谱
         if (prevSpectrum) {
             let f = 0;
-            const len = Math.floor(Math.min(spec.length, prevSpectrum.length) * 0.5);
-            for (let k = 0; k < len; k++) {
+            for (let k = 0; k < half; k++) {
                 const diff = spec[k] - prevSpectrum[k];
                 if (diff > 0) f += diff;
             }
             fluxAccum += f;
             fluxFrames++;
         }
-        prevSpectrum = spec;
+        prevSpectrum = spec.slice(0, half);
 
         let num=0, den=0;
-        for(let k=0; k<spec.length; k++){ num += k*spec[k]; den += spec[k]; }
+        for(let k=0; k<half; k++){ num += k*spec[k]; den += spec[k]; }
         const cent = den > 0.0001 ? num/den : 0;
+        centroidSum += cent;
+        centroidCount++;
 
-        timeAxis.push((i/sr).toFixed(2));
+        timeAxis.push(Math.round((i/sr)*100)/100);
         dyn.push(Math.max(0, 20*Math.log10(rms+1e-6)+60));
         eng.push(rms);
-        centroids.push(cent);
 
         if(rms > noiseThreshold && p && p>70 && p<1200) {
             rawPitch.push(p);
@@ -302,7 +316,7 @@ const analyzeAudio = async (filePath) => {
     const validPitchFrames = validFreqs.length;
     const totalFrames = cleanedPitch.length;
 
-    const avgCentroid = centroids.length > 0 ? centroids.reduce((a,b)=>a+b,0)/centroids.length : 0;
+    const avgCentroid = centroidCount > 0 ? centroidSum / centroidCount : 0;
     const binResolution = sr / bSize;
     const avgCentroidHz = avgCentroid * binResolution;
 

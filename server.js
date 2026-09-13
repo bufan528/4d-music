@@ -18,9 +18,10 @@ const NICKNAME_REGEX = /^[\u4e00-\u9fa5a-zA-Z0-9_\-]{1,20}$/;
 const REQUIRED_TOKEN = process.env.API_TOKEN || '';
 
 // CORS 允许来源：生产环境通过环境变量配置前端域名，多个用逗号分隔
+// [安全优化] 生产环境默认拒绝跨域（不再默认允许所有），开发环境才放行
 const ALLOWED_ORIGINS = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : true; // 开发环境默认允许所有
+    : (process.env.NODE_ENV === 'production' ? [] : true);
 
 // ==========================================
 // 性能优化配置（针对 1G 内存服务器）
@@ -70,7 +71,10 @@ const updateLeaderboard = (songId, nickname, totalScore, detailedScores) => {
     if (data[songId].length > 50) data[songId] = data[songId].slice(0, 50);
 
     try {
-        fs.writeFileSync(LEADERBOARD_FILE, JSON.stringify(data, null, 2), 'utf8');
+        // [可靠性] 先写临时文件再原子重命名，避免崩溃时排行榜 JSON 写一半损坏
+        const tmpFile = LEADERBOARD_FILE + '.tmp';
+        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tmpFile, LEADERBOARD_FILE);
     } catch (e) {
         console.error("写入排行榜失败:", e.message);
     }
@@ -161,12 +165,16 @@ const callLLM = async (ctx, scores) => {
     输出要求: 3个建议板块(标题+内容+动作指令"听听...")。`;
 
     try {
-        const completion = await client.chat.completions.create({
+        // [延迟优化] LLM 最多等15秒，超时直接降级，避免拖住整个 /analyze 响应
+        const llmPromise = client.chat.completions.create({
             messages: [{ role: "system", content: systemPrompt }, { role: "user", content: "请给建议" }],
             model: DEFAULT_MODEL,
             temperature: 0.7,
             max_tokens: 400
         });
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('LLM timeout')), 15000));
+        const completion = await Promise.race([llmPromise, timeoutPromise]);
         return completion.choices[0].message.content;
     } catch (e) {
         console.error("AI Error:", e.message);
@@ -227,14 +235,55 @@ app.use((req, res, next) => {
 });
 
 app.use(cors({ origin: ALLOWED_ORIGINS }));
+// [安全优化] 最小安全头（无新增依赖）：防 MIME 嗅探 + 防 clickjacking
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+});
+// [安全优化] /analyze 简易 per-IP 限流：10分钟窗口最多30次，防单人刷满队列
+const ANALYZE_RATE_WINDOW_MS = 10 * 60 * 1000;
+const ANALYZE_RATE_MAX = 30;
+const analyzeRateMap = new Map();
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, rec] of analyzeRateMap) {
+        if (now - rec.start > ANALYZE_RATE_WINDOW_MS) analyzeRateMap.delete(ip);
+    }
+}, 60 * 1000).unref();
+const analyzeRateLimit = (req, res, next) => {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    let rec = analyzeRateMap.get(ip);
+    if (!rec || now - rec.start > ANALYZE_RATE_WINDOW_MS) {
+        rec = { start: now, count: 0 };
+        analyzeRateMap.set(ip, rec);
+    }
+    rec.count++;
+    if (rec.count > ANALYZE_RATE_MAX) {
+        return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+    }
+    next();
+};
 app.use(express.json());
 
 // ==========================================
 // 上传配置
 // ==========================================
+const ALLOWED_AUDIO_EXT = new Set(['.webm', '.wav', '.mp3', '.m4a', '.ogg', '.opus', '.flac']);
 const upload = multer({
     dest: 'uploads/',
-    limits: { fileSize: MAX_UPLOAD_SIZE }
+    limits: { fileSize: MAX_UPLOAD_SIZE },
+    // [性能优化] 非音频文件在入口直接拒绝，省掉一次 ffmpeg 转码 + YIN 全量计算
+    fileFilter: (req, file, cb) => {
+        const name = String(file.originalname || '').toLowerCase();
+        const okExt = [...ALLOWED_AUDIO_EXT].some(ext => name.endsWith(ext));
+        const okMime = !file.mimetype || file.mimetype.startsWith('audio/') ||
+            file.mimetype === 'video/webm' || file.mimetype === 'application/octet-stream';
+        if (okExt || okMime) cb(null, true);
+        else cb(new Error('仅支持音频文件（webm/wav/mp3/m4a/ogg/flac）'));
+    }
 });
 ['uploads', 'processed', 'public'].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -271,7 +320,7 @@ app.get('/leaderboard', (req, res) => {
 });
 
 // --- 核心分析接口 ---
-app.post('/analyze', upload.single('file'), async (req, res) => {
+app.post('/analyze', analyzeRateLimit, upload.single('file'), async (req, res) => {
     // 歌曲库未就绪时返回友好提示
     if (!isLibraryReady) {
         return res.status(503).json({ error: '服务正在初始化歌曲库，请稍后重试（约10秒）' });
