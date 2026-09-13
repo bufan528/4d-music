@@ -18,9 +18,10 @@ const NICKNAME_REGEX = /^[\u4e00-\u9fa5a-zA-Z0-9_\-]{1,20}$/;
 const REQUIRED_TOKEN = process.env.API_TOKEN || '';
 
 // CORS 允许来源：生产环境通过环境变量配置前端域名，多个用逗号分隔
+// [安全优化] 生产环境默认拒绝跨域（不再默认允许所有），开发环境才放行
 const ALLOWED_ORIGINS = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : true; // 开发环境默认允许所有
+    : (process.env.NODE_ENV === 'production' ? [] : true);
 
 // ==========================================
 // 性能优化配置（针对 1G 内存服务器）
@@ -234,6 +235,37 @@ app.use((req, res, next) => {
 });
 
 app.use(cors({ origin: ALLOWED_ORIGINS }));
+// [安全优化] 最小安全头（无新增依赖）：防 MIME 嗅探 + 防 clickjacking
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+});
+// [安全优化] /analyze 简易 per-IP 限流：10分钟窗口最多30次，防单人刷满队列
+const ANALYZE_RATE_WINDOW_MS = 10 * 60 * 1000;
+const ANALYZE_RATE_MAX = 30;
+const analyzeRateMap = new Map();
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, rec] of analyzeRateMap) {
+        if (now - rec.start > ANALYZE_RATE_WINDOW_MS) analyzeRateMap.delete(ip);
+    }
+}, 60 * 1000).unref();
+const analyzeRateLimit = (req, res, next) => {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    let rec = analyzeRateMap.get(ip);
+    if (!rec || now - rec.start > ANALYZE_RATE_WINDOW_MS) {
+        rec = { start: now, count: 0 };
+        analyzeRateMap.set(ip, rec);
+    }
+    rec.count++;
+    if (rec.count > ANALYZE_RATE_MAX) {
+        return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+    }
+    next();
+};
 app.use(express.json());
 
 // ==========================================
@@ -288,7 +320,7 @@ app.get('/leaderboard', (req, res) => {
 });
 
 // --- 核心分析接口 ---
-app.post('/analyze', upload.single('file'), async (req, res) => {
+app.post('/analyze', analyzeRateLimit, upload.single('file'), async (req, res) => {
     // 歌曲库未就绪时返回友好提示
     if (!isLibraryReady) {
         return res.status(503).json({ error: '服务正在初始化歌曲库，请稍后重试（约10秒）' });

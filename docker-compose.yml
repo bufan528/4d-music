@@ -24,7 +24,20 @@ services:
       - ./processed:/app/processed
       - ./uploads:/app/uploads
       # 持久化排行榜数据，避免重建容器丢失
+      # 注意：宿主机 ./leaderboard.json 文件必须存在（touch 一个 {} 文件），
+      # 否则 Docker 会创建一个同名目录导致 EISDIR 启动问题
       - ./leaderboard.json:/app/leaderboard.json
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # 内存限制（DTW 带状改造后，1G 内存足够）
     deploy:
       resources:

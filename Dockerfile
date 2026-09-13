@@ -32,8 +32,16 @@ RUN cp "一程山路[vocals].mp3" "public/一程山路.mp3" && \
     cp "如愿[vocals].mp3" "public/如愿.mp3" && \
     cp "小幸运[vocals].mp3" "public/小幸运.mp3"
 
+# 生产默认值 + 非 root 运行 + 健康检查
+ENV NODE_ENV=production
+RUN chown -R node:node /app
+USER node
+
 # 暴露端口
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://localhost:8000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 # 启动服务
 CMD ["node", "server.js"]
