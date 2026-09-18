@@ -1,5 +1,3 @@
----
-
 # 🎤 四维声乐 - 智能演唱分析系统
 
 > 基于 **Node.js + React** 的实时声乐分析系统  
@@ -237,5 +235,3 @@ CORS_ORIGINS=https://your-frontend.example.com
 
 > 🎶 **让每一次演唱，都被科学听见。**  
 > —— 四维声乐
-
----
